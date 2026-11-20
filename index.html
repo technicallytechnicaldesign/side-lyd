@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#e8e8df">
+  <meta name="description" content="SIDE LYD. Independent frequencies for whatever you're making. Tune into electronica, house, after-hours textures and guitar-led sound.">
+  <title>SIDE LYD / Independent frequencies</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#receiver">Skip to receiver</a>
+  <div class="site-shell">
+    <header class="masthead">
+      <a class="wordmark" href="./" aria-label="SIDE LYD home">SIDE<span class="logo-mark" aria-hidden="true"><i></i><i></i><i></i></span>LYD<span class="wordmark-dot">✳</span></a>
+      <span class="masthead-caption">INDEPENDENT FREQUENCIES<br>FOR WHATEVER YOU'RE MAKING.</span>
+      <nav aria-label="Main navigation"><a class="nav-active" href="#receiver">The receiver</a><button id="open-saved" type="button">Saved moments <span id="saved-count">0</span></button><a href="https://github.com/technicallytechnicaldesign/side-lyd" target="_blank" rel="noopener noreferrer" class="repo-link">GitHub ↗</a></nav>
+    </header>
+
+    <main>
+      <section class="intro" aria-labelledby="page-title">
+        <div><p class="eyebrow"><span class="tiny-cross">✳</span> A GENLYD SIDE PROJECT / VOL. 01</p><h1 id="page-title">A little off<br>the main frequency<span>.</span></h1></div>
+        <div class="intro-note"><span class="mini-orbit" aria-hidden="true">↗</span><p>Good sounds. Unexpected turns.<br>A place to tune out, tune in,<br>and find your next idea.</p><a href="#channels">Find your frequency <span>↓</span></a></div>
+      </section>
+
+      <section id="receiver" class="receiver" aria-label="SIDE LYD receiver">
+        <div class="receiver-top"><span class="receiver-brand">SL / 01 <span>STEREO RECEIVER</span></span><span class="mode-badge"><i></i> CURATED ROTATION</span><button id="quiet-button" class="quiet-button" type="button" aria-pressed="false">Quiet view <span>↗</span></button></div>
+        <div class="receiver-body">
+          <div class="tuning-panel">
+            <div class="panel-heading"><span>YOUR FREQUENCY</span><span id="channel-counter">01 / 04</span></div>
+            <div class="frequency-display"><span id="frequency">90.4</span><span class="frequency-unit">SIDE<br>BAND</span><span class="signal-icon" aria-hidden="true"><i></i><i></i><i></i><i></i></span></div>
+            <div class="dial"><div class="dial-ticks" aria-hidden="true"></div><div id="dial-needle" class="dial-needle" aria-hidden="true"></div><input id="tune" type="range" min="0" max="3" step="1" value="0" aria-label="Tune channel"><div class="dial-labels" aria-hidden="true"><span>88</span><span>92</span><span>96</span><span>100</span><span>104</span><span>108</span></div></div>
+            <div class="station-identity"><span id="channel-name">Electronica</span><p id="channel-character">Textural / curious / moving</p></div>
+            <div id="station-buttons" class="station-buttons" aria-label="Choose a channel"></div>
+          </div>
+
+          <div class="playback-panel">
+            <div class="panel-heading"><span id="play-state">READY WHEN YOU ARE</span><span id="track-position">01 / 04</span></div>
+            <div class="now-playing"><div class="track-mark" aria-hidden="true"><span></span><span></span><span></span><i>SL</i></div><div><p class="eyebrow">ON THIS FREQUENCY</p><h2 id="track-title">Glass Circuit</h2><p id="track-description">Glassy details over a patient electronic pulse.</p></div></div>
+            <div class="waveform-wrap"><canvas id="waveform" aria-hidden="true"></canvas><div class="waveform-overlay"><span>SIDE FREQUENCIES 01</span><span id="bpm">104 BPM</span></div></div>
+            <input id="seek" class="seek" type="range" value="0" min="0" max="60" step="0.1" aria-label="Track position in seconds">
+            <div class="time-row"><span id="elapsed">0:00</span><span id="duration">1:00</span></div>
+            <div class="transport">
+              <div class="transport-main"><button id="previous" class="icon-button" type="button" aria-label="Previous track"><svg viewBox="0 0 24 24"><path d="M6 5v14M18 5l-9 7 9 7z"/></svg></button><button id="play" class="play-button" type="button" aria-label="Play"><span id="play-glyph">▶</span></button><button id="next" class="icon-button" type="button" aria-label="Next track"><svg viewBox="0 0 24 24"><path d="M18 5v14M6 5l9 7-9 7z"/></svg></button></div>
+              <div class="volume-control"><button id="mute" type="button" class="icon-button" aria-label="Mute" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4zM17 8q5 4 0 8"/></svg></button><input id="volume" type="range" min="0" max="1" step="0.01" value="0.7" aria-label="Volume"></div>
+              <button id="bookmark" class="save-button" type="button"><span>＋</span> Save moment</button>
+            </div>
+            <p id="player-message" class="player-message" role="status" aria-live="polite">Press play. Stay a while.</p>
+          </div>
+        </div>
+        <div class="receiver-bottom"><span><i class="status-led" id="status-led"></i><span id="signal-status">STANDING BY</span></span><span>COMPLETE STUDIES · CONTINUOUS ROTATION · NO TALK</span><button id="sleep-button" type="button">Sleep timer <span id="sleep-label">OFF</span></button></div>
+        <audio id="audio" preload="metadata" playsinline></audio><audio id="preload-audio" preload="auto" playsinline></audio>
+      </section>
+
+      <section id="channels" class="channels-section" aria-labelledby="channels-title"><div class="section-heading"><div><p class="eyebrow">FOUR WAYS TO WANDER</p><h2 id="channels-title">Pick a side.</h2></div><p>Different colours. Same curious spirit.<br>Switch whenever the mood does.</p></div><div id="channel-cards" class="channel-cards"></div></section>
+
+      <section class="rotation-section" aria-labelledby="rotation-title"><div class="section-heading"><div><p class="eyebrow" id="rotation-eyebrow">ON THE ELECTRONICA ROTATION</p><h2 id="rotation-title">In good company.</h2></div><span id="rotation-count" class="rotation-count">04 STUDIES</span></div><div id="track-list" class="track-list"></div></section>
+
+      <section class="make-section"><div class="make-symbol" aria-hidden="true">↗</div><div><p class="eyebrow">HEAR SOMETHING THAT FITS?</p><h2>Take the idea<br>somewhere else.</h2><p>Save a moment, keep a listening copy, or shape a music brief for something you're making.</p></div><div class="make-actions"><button id="open-brief" class="solid-button" type="button">Make a project brief <span>↗</span></button><a id="download-track" class="text-link" download>Download current study <span>↓</span></a><span class="small-note">Download your direction<br>for the GENLYD production workflow.</span></div></section>
+    </main>
+
+    <footer class="footer"><a class="footer-logo" href="./">SIDE LYD<span> / </span>GENLYD</a><p>Made for the work. And the spaces in between.</p><span>VOL. 01 / <a href="https://github.com/technicallytechnicaldesign/side-lyd" target="_blank" rel="noopener noreferrer">SOURCE ↗</a></span></footer>
+  </div>
+
+  <dialog id="saved-dialog"><div class="dialog-heading"><div><p class="eyebrow">YOUR LITTLE COLLECTION</p><h2>Saved moments.</h2></div><button type="button" data-close class="close-dialog" aria-label="Close saved moments">×</button></div><p class="dialog-intro">Kept on this browser. Pick up where an idea caught you.</p><div id="saved-list"></div><div class="dialog-footer"><button id="export-saved" class="solid-button" type="button">Export collection ↓</button></div></dialog>
+
+  <dialog id="brief-dialog"><div class="dialog-heading"><div><p class="eyebrow">FROM A SOUND TO AN IDEA</p><h2>Shape a brief.</h2></div><button type="button" data-close class="close-dialog" aria-label="Close project brief">×</button></div><p class="dialog-intro">Save a portable brief for the GENLYD production workflow. Your current study is included as a reference.</p><form id="brief-form"><label>Project name<input id="brief-project" name="project" required maxlength="100" placeholder="e.g. Workshop film"></label><div class="form-grid"><label>Length in seconds<input name="duration" type="number" min="5" max="3600" value="120" required></label><label>Space for a voice<select name="voice"><option value="instrumental">Instrumental foreground</option><option value="voice-bed">Leave room for narration</option></select></label></div><label>What should it feel like?<textarea name="notes" rows="3" maxlength="2000" placeholder="A quiet opening, a bit of momentum, and a gentle finish…"></textarea></label><div class="brief-reference" id="brief-reference"></div><button class="solid-button" type="submit">Save brief ↓</button></form></dialog>
+
+  <dialog id="sleep-dialog"><div class="dialog-heading"><div><p class="eyebrow">LET THE DAY WIND DOWN</p><h2>Sleep timer.</h2></div><button type="button" data-close class="close-dialog" aria-label="Close sleep timer">×</button></div><div class="sleep-options"><button type="button" data-sleep="15">15 min</button><button type="button" data-sleep="30">30 min</button><button type="button" data-sleep="60">60 min</button><button type="button" data-sleep="0">Off</button></div><p class="dialog-intro">Playback stops when the time is up.</p></dialog>
+  <noscript><p class="noscript">Enable JavaScript to tune the receiver. Audio files are also available in the GitHub repository.</p></noscript>
+</body>
+</html>
