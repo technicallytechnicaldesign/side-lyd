@@ -1,1 +1,1 @@
-SIDE LYD is an independent music receiver for GENLYD sound studies.
+[Listen to SIDE LYD](https://technicallytechnicaldesign.github.io/side-lyd/)
