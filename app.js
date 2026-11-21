@@ -9,11 +9,11 @@ function status(message){$('status').textContent=message;}
 function persist(){try{localStorage.setItem('side-lyd-mixer-v1',JSON.stringify({kit:$('bank').value,seed,controls,master}));}catch{}}
 function send(data){node?.port.postMessage(data);}
 function updateControls(){send({type:'controls',value:controls,master});persist();}
-function syncPlay(){ $('play').textContent=playing?'Pause':loading?'Loading…':'Play';$('record').disabled=!playing&&!recording;$('change').disabled=!bank;$('position').textContent=playing?'MIXING LOOPS':'PAUSED'; }
-function state(){return {engine:'side-lyd-loop-mixer/1',processor:node?.constructor.name||null,sampleRate:context?.sampleRate,kit:bank?.id,seed,controls:{...controls},master,progress:{...progress},loadedAssets:bank?.assets.length||0,playing,recording,events:[...events]};}
+function syncPlay(){ $('play').textContent=playing?'Pause':loading?'Loadingâ€¦':'Play';$('record').disabled=!playing&&!recording;$('change').disabled=!bank;$('position').textContent=playing?'MIXING LOOPS':'PAUSED'; }
+function state(){return {engine:'side-lyd-loop-mixer/2',processor:node?.constructor.name||null,sampleRate:context?.sampleRate,kit:bank?.id,seed,controls:{...controls},master,progress:{...progress},loadedAssets:bank?.assets.length||0,playing,recording,events:[...events]};}
 function blobDownload(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 function recipe(){return {schema:'side-lyd-loop-recipe/v1',savedAt:new Date().toISOString(),bankVersion:catalog.version,...state(),assets:bank?.assets.map(a=>({id:a.id,sha256:a.sha256})),reproduction:'Seed and controls define the initial run; manual control changes and saved phrase events are included as context, not an exact resume of effect tails.'};}
-function historyEntry(event){events.push(event);if(events.length>256)events.shift();const li=document.createElement('li');li.textContent=event.type==='phrase'?`Phrase ${event.phrase+1} · drums ${'ABCD'[event.choices[0]]} · bass/music ${'ABCD'[event.choices[1]]}`:event.type;$('history').prepend(li);while($('history').children.length>24)$('history').lastChild.remove();}
+function historyEntry(event){events.push(event);if(events.length>256)events.shift();const li=document.createElement('li');li.textContent=event.type==='phrase'?`Phrase ${event.phrase+1} Â· drums ${'ABCD'[event.choices[0]]} Â· bass/music ${'ABCD'[event.choices[1]]}`:event.type;$('history').prepend(li);while($('history').children.length>24)$('history').lastChild.remove();}
 function finishWav(data){
  recording=false;recordFrames=data.frames;
  recordMeta.endFrame=data.frame;recordMeta.recordedFrames=data.frames;
@@ -27,13 +27,13 @@ async function setup(){
  if(context&&node){await context.resume();return;}
  if(!context)context=new AudioContext({latencyHint:'playback'});await context.resume();
  if(!context.audioWorklet)throw new Error('This browser needs AudioWorklet support and HTTPS.');
- await context.audioWorklet.addModule('mixer-worklet.js?v=2');
+ await context.audioWorklet.addModule('mixer-worklet.js?v=3');
  node=new AudioWorkletNode(context,'side-lyd-mixer',{numberOfInputs:0,numberOfOutputs:1,outputChannelCount:[2]});
  analyser=context.createAnalyser();analyser.fftSize=1024;node.connect(analyser);analyser.connect(context.destination);
  node.onprocessorerror=()=>{playing=false;syncPlay();status('Audio engine stopped. Reload to restart.');};
  context.onstatechange=()=>{if(context.state!=='running'&&playing){playing=false;send({type:'run',value:false});syncPlay();status('Browser paused audio. Press Play to resume.');}};
  node.port.onmessage=({data})=>{
-  if(data.type==='phrase'){historyEntry(data);['drums','bass','other'].forEach((r,i)=>$(r+'-variant').textContent='ABCD'[data.choices[i]]);$('change').textContent='Change phrase';}
+  if(data.type==='phrase'){historyEntry(data);['drums','bass','other'].forEach((r,i)=>$(r+'-variant').textContent=data.variants[i]);$('change').textContent='Change phrase';}
   if(data.type==='position'){
    progress=data;$('elapsed').textContent=time(data.frame/context.sampleRate);$('phrase').textContent=data.phrase+1;$('bar').textContent=Math.floor(data.beat/4)%4+1;
    document.querySelectorAll('.beat-row i').forEach((dot,i)=>dot.classList.toggle('active',playing&&i===Math.floor(data.beat)%4));
@@ -55,7 +55,7 @@ function draw(){
 }
 async function loadBank(id){
  const token=++request;abort?.abort();abort=new AbortController();const selected=catalog.banks.find(b=>b.id===id);if(!selected)return;
- loading=true;syncPlay();status('Loading loops…');
+ loading=true;syncPlay();status('Loading loopsâ€¦');
  try{
   await setup();const assets=new Array(selected.assets.length);let cursor=0,finished=0;
   async function worker(){while(cursor<selected.assets.length){const i=cursor++,asset=selected.assets[i];const response=await fetch(asset.src+'?v='+asset.sha256.slice(0,12),{signal:abort.signal});if(!response.ok)throw new Error(`Could not load ${asset.id}`);const bytes=await response.arrayBuffer();const decoded=await context.decodeAudioData(bytes);if(token!==request)return;assets[i]={...asset,channels:[decoded.getChannelData(0).slice(),decoded.getChannelData(Math.min(1,decoded.numberOfChannels-1)).slice()]};status(`Loading loops ${++finished}/${selected.assets.length}`);}}
@@ -67,7 +67,7 @@ async function loadBank(id){
   for(const a of assets)a.channels=null;
   updateControls();send({type:'run',value:resume});
   $('tempo').textContent=`${Number(selected.bpm.toFixed(2))} BPM`;
-  $('assets').textContent=`12 loops + ${selected.assets.length-12} FX`;
+  $('assets').textContent=`${selected.assets.filter(a=>a.kind==='loop').length} loops + ${selected.assets.filter(a=>a.kind!=='loop').length} FX`;
   loading=false;syncPlay();persist();status(resume?'Mixing.':'Ready.');
  }catch(error){if(token!==request)return;loading=false;if(error.name!=='AbortError'){if(bank)$('bank').value=bank.id;status(`${error.message}. Press Play to retry.`);}syncPlay();throw error;}
 }
@@ -76,7 +76,7 @@ async function start(){
  catch(error){playing=false;syncPlay();status(error.message);}
 }
 $('play').onclick=()=>{if(playing){playing=false;send({type:'run',value:false});if(recording)send({type:'record',value:false});syncPlay();status('Paused.');if('mediaSession'in navigator)navigator.mediaSession.playbackState='paused';}else if(!loading)start();};
-$('bank').onchange=()=>{const b=catalog.banks.find(b=>b.id===$('bank').value);$('tempo').textContent=`${Number(b.bpm.toFixed(2))} BPM`;$('assets').textContent=`12 loops + ${b.assets.length-12} FX`;if(context)loadBank(b.id).catch(()=>{});persist();};
+$('bank').onchange=()=>{const b=catalog.banks.find(b=>b.id===$('bank').value);$('tempo').textContent=`${Number(b.bpm.toFixed(2))} BPM`;$('assets').textContent=`${b.assets.filter(a=>a.kind==='loop').length} loops + ${b.assets.filter(a=>a.kind!=='loop').length} FX`;if(context)loadBank(b.id).catch(()=>{});persist();};
 for(const key of names){$(key).value=controls[key];$(key+'-value').value=Math.round(controls[key]*100);$(key).oninput=()=>{controls[key]=Number($(key).value);$(key+'-value').value=Math.round(controls[key]*100);updateControls();historyEntry({type:`${key} ${Math.round(controls[key]*100)}`,frame:progress.frame});};}
 $('volume').value=master;$('volume-value').value=Math.round(master*100);$('volume').oninput=()=>{master=Number($('volume').value);$('volume-value').value=Math.round(master*100);updateControls();};
 $('hold').onclick=()=>{controls.hold=!controls.hold;$('hold').setAttribute('aria-pressed',String(controls.hold));updateControls();};
@@ -87,10 +87,10 @@ $('save-recipe').onclick=()=>blobDownload(new Blob([JSON.stringify(recipe(),null
 $('record').onclick=()=>{if(recording){send({type:'record',value:false});return;}if(!playing)return;recording=true;chunks=[];recordFrames=0;wav=null;recordMeta={...recipe(),sampleRate:context.sampleRate};$('save-wav').disabled=true;$('record').textContent='Stop recording';$('record').setAttribute('aria-pressed','true');send({type:'record',value:true});status('Recording the loop mix. Maximum 5 minutes.');};
 $('save-wav').onclick=()=>{if(wav){blobDownload(wav,`SIDE-LYD-${recordMeta.kit}-${recordMeta.seed}.wav`);blobDownload(new Blob([JSON.stringify(recordMeta,null,2)],{type:'application/json'}),`SIDE-LYD-${recordMeta.kit}-${recordMeta.seed}.json`);}};
 window.sideLyd={getState:state,recipe};
-fetch('banks.json?v=2').then(r=>{if(!r.ok)throw new Error('Could not load loop banks.');return r.json();}).then(data=>{
+fetch('banks.json?v=3').then(r=>{if(!r.ok)throw new Error('Could not load loop banks.');return r.json();}).then(data=>{
  catalog=data;for(const b of data.banks){const option=document.createElement('option');option.value=b.id;option.textContent=b.title;$('bank').append(option);}
  let remembered;try{remembered=JSON.parse(localStorage.getItem('side-lyd-mixer-v1'))?.kit;}catch{}
  const query=new URLSearchParams(location.search),requested=query.get('kit')||(query.get('channel')==='house'?'velvet-drive':remembered);
  if(catalog.banks.some(b=>b.id===requested))$('bank').value=requested;
- const b=catalog.banks.find(b=>b.id===$('bank').value);$('tempo').textContent=`${Number(b.bpm.toFixed(2))} BPM`;$('assets').textContent=`12 loops + ${b.assets.length-12} FX`;$('play').disabled=false;status('Ready.');draw();
+ const b=catalog.banks.find(b=>b.id===$('bank').value);$('tempo').textContent=`${Number(b.bpm.toFixed(2))} BPM`;$('assets').textContent=`${b.assets.filter(a=>a.kind==='loop').length} loops + ${b.assets.filter(a=>a.kind!=='loop').length} FX`;$('play').disabled=false;status('Ready.');draw();
 }).catch(error=>status(error.message));
