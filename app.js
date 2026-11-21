@@ -27,7 +27,7 @@ async function setup(){
  if(context&&node){await context.resume();return;}
  if(!context)context=new AudioContext({latencyHint:'playback'});await context.resume();
  if(!context.audioWorklet)throw new Error('This browser needs AudioWorklet support and HTTPS.');
- await context.audioWorklet.addModule('mixer-worklet.js?v=voices-2');
+ await context.audioWorklet.addModule('mixer-worklet.js?v=breaths-3');
  node=new AudioWorkletNode(context,'side-lyd-mixer',{numberOfInputs:0,numberOfOutputs:1,outputChannelCount:[2]});
  analyser=context.createAnalyser();analyser.fftSize=1024;node.connect(analyser);analyser.connect(context.destination);
  node.onprocessorerror=()=>{playing=false;syncPlay();status('Audio engine stopped. Reload to restart.');};
@@ -88,7 +88,7 @@ $('save-recipe').onclick=()=>blobDownload(new Blob([JSON.stringify(recipe(),null
 $('record').onclick=()=>{if(recording){send({type:'record',value:false});return;}if(!playing)return;recording=true;chunks=[];recordFrames=0;wav=null;recordMeta={...recipe(),sampleRate:context.sampleRate};$('save-wav').disabled=true;$('record').textContent='Stop recording';$('record').setAttribute('aria-pressed','true');send({type:'record',value:true});status('Recording the loop mix. Maximum 5 minutes.');};
 $('save-wav').onclick=()=>{if(wav){blobDownload(wav,`SIDE-LYD-${recordMeta.kit}-${recordMeta.seed}.wav`);blobDownload(new Blob([JSON.stringify(recordMeta,null,2)],{type:'application/json'}),`SIDE-LYD-${recordMeta.kit}-${recordMeta.seed}.json`);}};
 window.sideLyd={getState:state,recipe};
-fetch('banks.json?v=voices-2').then(r=>{if(!r.ok)throw new Error('Could not load loop banks.');return r.json();}).then(data=>{
+fetch('banks.json?v=breaths-3').then(r=>{if(!r.ok)throw new Error('Could not load loop banks.');return r.json();}).then(data=>{
  catalog=data;for(const b of data.banks){const option=document.createElement('option');option.value=b.id;option.textContent=b.title;$('bank').append(option);}
  let remembered;try{remembered=JSON.parse(localStorage.getItem('side-lyd-mixer-v1'))?.kit;}catch{}
  const query=new URLSearchParams(location.search),requested=query.get('kit')||(query.get('channel')==='house'?'velvet-drive':remembered);
