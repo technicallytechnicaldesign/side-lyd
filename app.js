@@ -1,440 +1,96 @@
-const $ = id => document.getElementById(id);
-const clock = seconds => {
-  const value = Math.max(0, Math.floor(Number(seconds) || 0));
-  return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`;
-};
-const read = (key, fallback) => {
-  try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
-};
-const write = (key, value) => {
-  try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; }
-};
-const text = (tag, value, className) => {
-  const node = document.createElement(tag);
-  node.textContent = value;
-  if (className) node.className = className;
-  return node;
-};
-const download = (name, value) => {
-  const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], {type: 'application/json'}));
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = name;
-  anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-};
-
-async function boot() {
-  const response = await fetch(new URL('catalogue.json', import.meta.url));
-  if (!response.ok) throw new Error('The rotation could not load. Please refresh to try again.');
-  const catalogue = await response.json();
-  if (!Array.isArray(catalogue.channels) || !Array.isArray(catalogue.tracks) || !catalogue.tracks.length) throw new Error('The rotation is unavailable.');
-  const channels = catalogue.channels;
-  const trackMap = new Map(catalogue.tracks.map(track => [track.id, track]));
-  const remembered = read('side-lyd-player-v1', {});
-  const query = new URLSearchParams(location.search);
-  let channel = channels.find(item => item.id === query.get('channel')) || channels.find(item => item.id === remembered.channel) || channels[0];
-  let track = trackMap.get(remembered.track);
-  if (!track || !channel.ids.includes(track.id)) track = trackMap.get(channel.ids[0]);
-  let active = $('audio');
-  let standby = $('preload-audio');
-  let generation = 0;
-  let desiredPlaying = false;
-  let failed = new Set();
-  let sleepAt = 0;
-  let frame = 0;
-  let lastSavedAt = 0;
-  let stallTimer = 0;
-  let briefReference = null;
-  let quiet = remembered.quiet === true;
-  let volume = Math.max(0, Math.min(1, Number.isFinite(remembered.volume) ? remembered.volume : 0.7));
-  let muted = false;
-  let moments = read('side-lyd-moments-v1', []);
-  moments = Array.isArray(moments) ? moments.filter(item => item && typeof item.id === 'string' && typeof item.channel === 'string' && channels.some(c => c.id === item.channel && c.ids.includes(item.track)) && Number.isFinite(item.seconds)).slice(-100) : [];
-
-  function message(value) { $('player-message').textContent = value; }
-  function persist() {
-    write('side-lyd-player-v1', {channel: channel.id, track: track.id, seconds: active.currentTime || 0, volume, quiet});
-  }
-  function nextTrack(direction = 1) {
-    const index = channel.ids.indexOf(track.id);
-    for (let step = 1; step <= channel.ids.length; step++) {
-      const id = channel.ids[(index + direction * step + channel.ids.length * 2) % channel.ids.length];
-      if (!failed.has(id)) return trackMap.get(id);
-    }
-    return null;
-  }
-  function setPlaying(playing, label) {
-    $('play').setAttribute('aria-label', playing ? 'Pause' : 'Play');
-    $('play-glyph').textContent = playing ? 'Ⅱ' : '▶';
-    $('play-state').textContent = label || (playing ? 'IN ROTATION' : 'PAUSED');
-    $('signal-status').textContent = playing ? 'SIGNAL FOUND' : 'STANDING BY';
-    $('status-led').classList.toggle('active', playing);
-    document.title = playing ? `${track.title} / SIDE LYD` : 'SIDE LYD / Independent frequencies';
-    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
-    draw();
-    if (playing && !frame) frame = requestAnimationFrame(animate);
-  }
-  function draw() {
-    const canvas = $('waveform');
-    const box = canvas.getBoundingClientRect();
-    if (!box.width || !box.height) return;
-    const ratio = Math.min(window.devicePixelRatio || 1, 2);
-    const width = Math.round(box.width * ratio), height = Math.round(box.height * ratio);
-    if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, width, height);
-    const progress = Math.min(1, (active.currentTime || 0) / track.duration);
-    const count = Math.max(1, Math.floor(box.width / 3));
-    for (let index = 0; index < count; index++) {
-      const level = track.waveform[Math.floor(index * track.waveform.length / count)] || 0;
-      const barHeight = Math.max(2 * ratio, level * height * 0.88);
-      ctx.fillStyle = index / count <= progress ? channel.color : '#607154';
-      ctx.globalAlpha = index / count <= progress ? 0.95 : 0.75;
-      ctx.fillRect(index * width / count, (height - barHeight) / 2, Math.max(1, ratio * 1.3), barHeight);
-    }
-    ctx.globalAlpha = 1;
-  }
-  function animate() {
-    frame = 0;
-    draw();
-    if (!active.paused) frame = requestAnimationFrame(animate);
-  }
-  function updateTime() {
-    const duration = Number.isFinite(active.duration) ? active.duration : track.duration;
-    const current = active.currentTime || 0;
-    $('seek').max = duration;
-    $('seek').value = current;
-    $('seek').style.setProperty('--progress', `${100 * current / Math.max(duration, 1)}%`);
-    $('seek').setAttribute('aria-valuetext', `${clock(current)} of ${clock(duration)}`);
-    $('elapsed').textContent = clock(current);
-    $('duration').textContent = clock(duration);
-    if ('mediaSession' in navigator && navigator.mediaSession.setPositionState && duration > 0) {
-      try { navigator.mediaSession.setPositionState({duration, playbackRate: 1, position: Math.min(current, duration)}); } catch {}
-    }
-    if (Date.now() - lastSavedAt > 5000) { persist(); lastSavedAt = Date.now(); }
-    checkSleep();
-    if (active.paused) draw();
-  }
-  function prepareNext() {
-    const next = nextTrack();
-    if (!next || standby.dataset.track === next.id) return;
-    standby.dataset.track = next.id;
-    standby.src = next.src;
-    standby.load();
-  }
-  function updateMedia() {
-    if (!('mediaSession' in navigator) || !window.MediaMetadata) return;
-    navigator.mediaSession.metadata = new MediaMetadata({title: track.title, artist: 'SIDE LYD', album: channel.name, artwork: [{src: new URL('icon.svg', location.href).href, sizes: 'any', type: 'image/svg+xml'}]});
-  }
-  function renderChannel() {
-    const number = channels.indexOf(channel);
-    document.documentElement.style.setProperty('--accent', channel.color);
-    $('receiver').style.setProperty('--accent', channel.color);
-    $('frequency').textContent = channel.frequency.toFixed(1);
-    $('channel-counter').textContent = `${String(number + 1).padStart(2, '0')} / 04`;
-    $('channel-name').textContent = channel.name;
-    $('channel-character').textContent = channel.character;
-    $('tune').value = number;
-    $('tune').setAttribute('aria-valuetext', channel.name);
-    $('dial-needle').style.left = `${100 * (channel.frequency - 88) / 20}%`;
-    document.querySelectorAll('[data-channel]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.channel === channel.id)));
-    $('rotation-eyebrow').textContent = `ON THE ${channel.name.toUpperCase()} ROTATION`;
-    $('rotation-count').textContent = `${String(channel.ids.length).padStart(2, '0')} ${channel.ids.length === 1 ? 'STUDY' : 'STUDIES'}`;
-    const list = $('track-list');
-    list.replaceChildren();
-    channel.ids.forEach((id, index) => {
-      const item = trackMap.get(id);
-      const row = text('div', '', 'track-row');
-      row.dataset.track = id;
-      const info = text('div', '', 'track-info');
-      const title = text('button', item.title);
-      title.type = 'button';
-      title.addEventListener('click', () => select(item, true));
-      info.append(title, text('small', item.description));
-      const play = text('button', '▶', 'row-play');
-      play.type = 'button';
-      play.setAttribute('aria-label', `Play ${item.title}`);
-      play.addEventListener('click', () => select(item, true));
-      row.append(text('span', String(index + 1).padStart(2, '0'), 'track-index'), text('span', '', 'track-mini'), info, text('span', `${item.bpm} BPM`, 'track-tempo'), text('span', clock(item.duration), 'track-duration'), play);
-      list.append(row);
-    });
-    const url = new URL(location.href);
-    url.searchParams.set('channel', channel.id);
-    history.replaceState(null, '', url);
-  }
-  function renderTrack() {
-    $('track-title').textContent = track.title;
-    $('track-description').textContent = track.description;
-    $('track-position').textContent = `${String(channel.ids.indexOf(track.id) + 1).padStart(2, '0')} / ${String(channel.ids.length).padStart(2, '0')}`;
-    $('bpm').textContent = `${track.bpm} BPM`;
-    $('download-track').href = track.src;
-    $('download-track').download = `SIDE-LYD-${track.id}.mp3`;
-    document.querySelectorAll('.track-row').forEach(row => row.classList.toggle('current', row.dataset.track === track.id));
-    updateMedia();
-    updateTime();
-  }
-  async function select(item, play = false, seconds = 0) {
-    if (!item) return;
-    const token = ++generation;
-    clearTimeout(stallTimer);
-    desiredPlaying = play;
-    active.pause();
-    if (standby.dataset.track === item.id) {
-      [active, standby] = [standby, active];
-    } else if (active.dataset.track !== item.id) {
-      active.dataset.track = item.id;
-      active.src = item.src;
-      active.load();
-    }
-    track = item;
-    if (active.error) active.load();
-    active.volume = volume;
-    active.muted = muted;
-    const seekTo = () => {
-      if (token !== generation) return;
-      active.currentTime = Math.min(Math.max(0, seconds), Math.max(0, track.duration - 0.25));
-      updateTime();
-    };
-    if (active.readyState >= 1) seekTo();
-    else active.addEventListener('loadedmetadata', seekTo, {once: true});
-    renderTrack();
-    setPlaying(false, play ? 'TUNING IN' : 'READY WHEN YOU ARE');
-    message(play ? 'Finding the frequency…' : 'Press play. Stay a while.');
-    prepareNext();
-    persist();
-    if (!play) return;
-    try {
-      await active.play();
-      if (token !== generation) return;
-      setPlaying(true);
-      message(channel.label);
-    } catch (error) {
-      if (token !== generation || error.name === 'AbortError') return;
-      if (error.name === 'NotAllowedError') {
-        desiredPlaying = false;
-        setPlaying(false, 'PRESS PLAY TO TUNE IN');
-        message('Tap play to allow audio in this browser.');
-      } else {
-        failed.add(item.id);
-        const next = nextTrack();
-        if (next) { message('That study is unavailable. Trying the next one.'); select(next, true); }
-        else { desiredPlaying = false; setPlaying(false, 'SIGNAL UNAVAILABLE'); message('The audio could not load. Check your connection, then press play to retry.'); }
-      }
-    }
-  }
-  function tune(id, forcePlay = false) {
-    const selected = channels.find(item => item.id === id);
-    if (!selected) return;
-    const wasPlaying = desiredPlaying || forcePlay;
-    channel = selected;
-    failed.clear();
-    renderChannel();
-    select(trackMap.get(channel.ids[0]), wasPlaying);
-  }
-  function recover(token) {
-    if (token !== generation || !desiredPlaying) return;
-    clearTimeout(stallTimer);
-    failed.add(track.id);
-    const next = nextTrack();
-    if (next) select(next, true);
-    else {
-      desiredPlaying = false;
-      active.pause();
-      setPlaying(false, 'SIGNAL UNAVAILABLE');
-      message('The audio could not load. Check your connection, then press play to retry.');
-    }
-  }
-  function toggle() {
-    if (!active.paused) {
-      desiredPlaying = false;
-      active.pause();
-      persist();
-    } else {
-      failed.clear();
-      select(track, true, active.currentTime || 0);
-    }
-  }
-  function renderMoments() {
-    $('saved-count').textContent = moments.length;
-    const list = $('saved-list');
-    list.replaceChildren();
-    if (!moments.length) list.append(text('p', 'Something catch your ear? Press Save moment on the receiver. Your collection will be waiting here.', 'empty-state'));
-    [...moments].reverse().forEach(moment => {
-      const item = trackMap.get(moment.track);
-      const savedChannel = channels.find(c => c.id === moment.channel);
-      const row = text('div', '', 'saved-item');
-      const replay = document.createElement('button');
-      replay.type = 'button';
-      replay.append(text('strong', `${item.title} ↗`), text('small', `${savedChannel.name} / ${clock(moment.seconds)}`));
-      replay.addEventListener('click', () => {
-        channel = savedChannel;
-        failed.clear();
-        renderChannel();
-        select(item, true, moment.seconds);
-        $('saved-dialog').close();
-        $('receiver').scrollIntoView({behavior: 'smooth', block: 'start'});
-      });
-      const remove = text('button', '×', 'remove-saved');
-      remove.type = 'button';
-      remove.setAttribute('aria-label', `Remove saved moment from ${item.title}`);
-      remove.addEventListener('click', () => { moments = moments.filter(m => m.id !== moment.id); write('side-lyd-moments-v1', moments); renderMoments(); });
-      row.append(replay, remove);
-      list.append(row);
-    });
-    $('export-saved').disabled = moments.length === 0;
-  }
-  function checkSleep() {
-    if (!sleepAt) return;
-    const remaining = sleepAt - Date.now();
-    if (remaining <= 0) {
-      sleepAt = 0;
-      desiredPlaying = false;
-      active.pause();
-      $('sleep-label').textContent = 'OFF';
-      message('Sleep timer finished. Rest easy.');
-    } else $('sleep-label').textContent = `${Math.ceil(remaining / 60000)} MIN`;
-  }
-
-  channels.forEach((item, index) => {
-    const button = text('button', String(index + 1).padStart(2, '0'));
-    button.type = 'button';
-    button.dataset.channel = item.id;
-    button.setAttribute('aria-label', `Tune to ${item.name}`);
-    button.addEventListener('click', () => tune(item.id));
-    $('station-buttons').append(button);
-    const card = document.createElement('button');
-    card.type = 'button';
-    card.className = 'channel-card';
-    card.dataset.channel = item.id;
-    const top = text('span', '', 'channel-card-top');
-    top.append(text('span', `${String(index + 1).padStart(2, '0')} / ${item.frequency.toFixed(1)}`), text('span', '↗', 'channel-arrow'));
-    const art = text('span', '', 'channel-art');
-    art.setAttribute('aria-hidden', 'true');
-    for (let i = 0; i < 3; i++) art.append(document.createElement('i'));
-    const bottom = text('span', '', 'channel-card-bottom');
-    bottom.append(document.createElement('i'), text('span', `${item.ids.length} ${item.ids.length === 1 ? 'STUDY' : 'STUDIES'} IN ROTATION`));
-    card.append(top, art, text('h3', item.name), text('p', item.description), bottom);
-    card.addEventListener('click', () => { tune(item.id, true); $('receiver').scrollIntoView({behavior: 'smooth', block: 'start'}); });
-    $('channel-cards').append(card);
-  });
-  [active, standby].forEach(element => {
-    element.addEventListener('timeupdate', () => { if (element === active) updateTime(); });
-    element.addEventListener('loadedmetadata', () => { if (element === active) updateTime(); });
-    element.addEventListener('play', () => { if (element === active) setPlaying(true); });
-    element.addEventListener('pause', () => { if (element === active && element.paused) { clearTimeout(stallTimer); setPlaying(false, element.error ? 'SIGNAL UNAVAILABLE' : undefined); } });
-    element.addEventListener('ended', () => { if (element === active && desiredPlaying) { checkSleep(); if (desiredPlaying) select(nextTrack(), true); } });
-    element.addEventListener('waiting', () => {
-      if (element !== active || !desiredPlaying) return;
-      $('play-state').textContent = 'BUFFERING';
-      message('Waiting for audio. Playback will continue when it is ready.');
-      const token = generation, position = element.currentTime;
-      clearTimeout(stallTimer);
-      stallTimer = setTimeout(() => { if (element === active && Math.abs(element.currentTime - position) < 0.05) recover(token); }, 12000);
-    });
-    element.addEventListener('error', () => {
-      if (element !== active || !desiredPlaying) return;
-      const token = generation;
-      setTimeout(() => { if (element === active && element.error) recover(token); }, 100);
-    });
-    element.addEventListener('playing', () => { if (element === active) { clearTimeout(stallTimer); setPlaying(true); message(channel.label); } });
-  });
-  $('play').addEventListener('click', toggle);
-  $('next').addEventListener('click', () => { failed.clear(); select(nextTrack(), true); });
-  $('previous').addEventListener('click', () => {
-    failed.clear();
-    if (active.currentTime > 3) select(track, true, 0);
-    else select(nextTrack(-1), true);
-  });
-  $('tune').addEventListener('input', event => tune(channels[Number(event.target.value)].id));
-  $('seek').addEventListener('input', event => {
-    if (active.readyState >= 1) { active.currentTime = Number(event.target.value); updateTime(); draw(); }
-  });
-  $('volume').value = volume;
-  $('volume').addEventListener('input', event => {
-    volume = Number(event.target.value);
-    active.volume = volume;
-    standby.volume = volume;
-    persist();
-  });
-  $('mute').addEventListener('click', () => {
-    muted = !muted;
-    active.muted = muted;
-    $('mute').setAttribute('aria-pressed', String(muted));
-    $('mute').setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
-  });
-  function applyQuiet() {
-    document.body.classList.toggle('quiet', quiet);
-    $('quiet-button').setAttribute('aria-pressed', String(quiet));
-    $('quiet-button').firstChild.textContent = quiet ? 'Full view ' : 'Quiet view ';
-    draw();
-  }
-  $('quiet-button').addEventListener('click', () => { quiet = !quiet; applyQuiet(); persist(); });
-  $('bookmark').addEventListener('click', () => {
-    const seconds = Math.min(active.currentTime || 0, track.duration);
-    moments.push({id: crypto.randomUUID(), channel: channel.id, track: track.id, seconds: Math.round(seconds * 10) / 10, edition: catalogue.edition, catalogueVersion: catalogue.version, audioSha256: track.sha256, savedAt: new Date().toISOString(), mode: catalogue.mode});
-    moments = moments.slice(-100);
-    const stored = write('side-lyd-moments-v1', moments);
-    renderMoments();
-    message(stored ? `Saved ${track.title} at ${clock(seconds)}. Find it in Saved moments.` : 'Saved for this visit. Export your collection to keep it; browser storage is unavailable.');
-  });
-  $('open-saved').addEventListener('click', () => { renderMoments(); $('saved-dialog').showModal(); });
-  $('export-saved').addEventListener('click', () => download('SIDE-LYD-saved-moments.json', {schema: 'side-lyd-moments/v1', exportedAt: new Date().toISOString(), moments}));
-  $('open-brief').addEventListener('click', () => {
-    briefReference = {edition: catalogue.edition, channel: channel.id, track: track.id, seconds: Math.round((active.currentTime || 0) * 10) / 10, audioSha256: track.sha256};
-    $('brief-reference').replaceChildren(text('strong', `Reference: ${track.title}`), text('span', `${channel.name} / ${track.bpm} BPM / ${clock(active.currentTime)}`));
-    $('brief-dialog').showModal();
-  });
-  $('brief-form').addEventListener('submit', event => {
-    event.preventDefault();
-    const values = new FormData(event.target);
-    const brief = {schema: 'side-lyd-project-brief/v1', createdAt: new Date().toISOString(), project: values.get('project').trim(), durationSeconds: Number(values.get('duration')), durationPolicy: 'total-including-tail', use: values.get('voice'), notes: values.get('notes').trim(), candidatesRequested: 3, reference: briefReference, requestedOutputs: ['wav-master', 'mp3-preview', 'aligned-stems', 'score', 'recipe'], status: 'brief-only'};
-    if (!brief.project || !Number.isFinite(brief.durationSeconds) || brief.durationSeconds < 5 || brief.durationSeconds > 3600) return;
-    download(`SIDE-LYD-${brief.project.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0,60) || 'project'}-brief.json`, brief);
-    $('brief-dialog').close();
-    message('Project brief saved. Bring it into the GENLYD production workflow.');
-  });
-  document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => button.closest('dialog').close()));
-  document.querySelectorAll('dialog').forEach(dialog => dialog.addEventListener('click', event => {
-    const rect = dialog.getBoundingClientRect();
-    if (event.target === dialog && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) dialog.close();
-  }));
-  $('sleep-button').addEventListener('click', () => $('sleep-dialog').showModal());
-  document.querySelectorAll('[data-sleep]').forEach(button => button.addEventListener('click', () => {
-    const minutes = Number(button.dataset.sleep);
-    sleepAt = minutes ? Date.now() + minutes * 60000 : 0;
-    $('sleep-label').textContent = minutes ? `${minutes} MIN` : 'OFF';
-    $('sleep-dialog').close();
-    message(minutes ? `Playback will stop in ${minutes} minutes.` : 'Sleep timer switched off.');
-  }));
-  setInterval(checkSleep, 1000);
-  document.addEventListener('visibilitychange', () => { checkSleep(); updateTime(); });
-  window.addEventListener('pagehide', persist);
-  window.addEventListener('resize', draw);
-  if ('ResizeObserver' in window) new ResizeObserver(draw).observe($('waveform'));
-  document.addEventListener('keydown', event => {
-    if (event.target.closest('input,textarea,select,button,a,dialog')) return;
-    if (event.code === 'Space') { event.preventDefault(); toggle(); }
-  });
-  if ('mediaSession' in navigator) {
-    const handlers = {
-      play: () => { if (active.paused) toggle(); }, pause: () => { desiredPlaying = false; active.pause(); },
-      nexttrack: () => select(nextTrack(), true), previoustrack: () => select(nextTrack(-1), true),
-      seekto: details => { if (Number.isFinite(details.seekTime)) { active.currentTime = Math.max(0, Math.min(details.seekTime, track.duration)); updateTime(); } },
-      seekbackward: details => { active.currentTime = Math.max(0, active.currentTime - (details.seekOffset || 10)); },
-      seekforward: details => { active.currentTime = Math.min(track.duration, active.currentTime + (details.seekOffset || 10)); }
-    };
-    for (const [action, handler] of Object.entries(handlers)) { try { navigator.mediaSession.setActionHandler(action, handler); } catch {} }
-  }
-  renderChannel();
-  renderMoments();
-  applyQuiet();
-  const initial = track;
-  await select(initial, false, remembered.track === initial.id && Number.isFinite(remembered.seconds) ? remembered.seconds : 0);
+const $=id=>document.getElementById(id);
+const names=['drums','bass','other','fx','energy','variation','flavor'];
+const time=s=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+let catalog,bank,context,node,analyser,request=0,abort,loading=false,playing=false,recording=false,chunks=[],recordMeta=null,wav=null;
+let progress={frame:0,phrase:0,beat:0,peak:0},events=[],controls={drums:.8,bass:.8,other:.8,fx:.8,energy:.65,variation:.5,flavor:.3,hold:false};
+let master=.7,seed=7431,animation=0,recordFrames=0;
+try{const saved=JSON.parse(localStorage.getItem('side-lyd-mixer-v1'));if(saved){seed=Number(saved.seed)>>>0||7431;for(const key of names)if(Number.isFinite(saved.controls?.[key]))controls[key]=Math.max(0,Math.min(1,saved.controls[key]));if(Number.isFinite(saved.master))master=Math.max(0,Math.min(1,saved.master));}}catch{}
+function status(message){$('status').textContent=message;}
+function persist(){try{localStorage.setItem('side-lyd-mixer-v1',JSON.stringify({kit:$('bank').value,seed,controls,master}));}catch{}}
+function send(data){node?.port.postMessage(data);}
+function updateControls(){send({type:'controls',value:controls,master});persist();}
+function syncPlay(){ $('play').textContent=playing?'Pause':loading?'Loading…':'Play';$('record').disabled=!playing&&!recording;$('change').disabled=!bank;$('position').textContent=playing?'MIXING LOOPS':'PAUSED'; }
+function state(){return {engine:'side-lyd-loop-mixer/1',processor:node?.constructor.name||null,sampleRate:context?.sampleRate,kit:bank?.id,seed,controls:{...controls},master,progress:{...progress},loadedAssets:bank?.assets.length||0,playing,recording,events:[...events]};}
+function blobDownload(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+function recipe(){return {schema:'side-lyd-loop-recipe/v1',savedAt:new Date().toISOString(),bankVersion:catalog.version,...state(),assets:bank?.assets.map(a=>({id:a.id,sha256:a.sha256})),reproduction:'Seed and controls define the initial run; manual control changes and saved phrase events are included as context, not an exact resume of effect tails.'};}
+function historyEntry(event){events.push(event);if(events.length>256)events.shift();const li=document.createElement('li');li.textContent=event.type==='phrase'?`Phrase ${event.phrase+1} · drums ${'ABCD'[event.choices[0]]} · bass/music ${'ABCD'[event.choices[1]]}`:event.type;$('history').prepend(li);while($('history').children.length>24)$('history').lastChild.remove();}
+function finishWav(data){
+ recording=false;recordFrames=data.frames;
+ recordMeta.endFrame=data.frame;recordMeta.recordedFrames=data.frames;
+ const count=chunks.reduce((n,c)=>n+c.byteLength,0),header=new ArrayBuffer(44),v=new DataView(header);
+ const str=(offset,value)=>{for(let i=0;i<value.length;i++)v.setUint8(offset+i,value.charCodeAt(i));};
+ str(0,'RIFF');v.setUint32(4,36+count,true);str(8,'WAVE');str(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,2,true);v.setUint32(24,recordMeta.sampleRate,true);v.setUint32(28,recordMeta.sampleRate*4,true);v.setUint16(32,4,true);v.setUint16(34,16,true);str(36,'data');v.setUint32(40,count,true);
+ wav=new Blob([header,...chunks],{type:'audio/wav'});chunks=[];
+ $('record').innerHTML='<span class="record-dot"></span> Record WAV';$('record').setAttribute('aria-pressed','false');$('save-wav').disabled=count===0;$('record-time').textContent=`${time(data.frames/recordMeta.sampleRate)} / 5:00`;syncPlay();status('Recording ready.');
 }
-
-boot().catch(error => {
-  $('player-message').textContent = error.message || 'The receiver could not start. Please refresh to try again.';
-  $('play-state').textContent = 'ROTATION UNAVAILABLE';
-  $('play').disabled = true;
-});
+async function setup(){
+ if(context&&node){await context.resume();return;}
+ if(!context)context=new AudioContext({latencyHint:'playback'});await context.resume();
+ if(!context.audioWorklet)throw new Error('This browser needs AudioWorklet support and HTTPS.');
+ await context.audioWorklet.addModule('mixer-worklet.js?v=2');
+ node=new AudioWorkletNode(context,'side-lyd-mixer',{numberOfInputs:0,numberOfOutputs:1,outputChannelCount:[2]});
+ analyser=context.createAnalyser();analyser.fftSize=1024;node.connect(analyser);analyser.connect(context.destination);
+ node.onprocessorerror=()=>{playing=false;syncPlay();status('Audio engine stopped. Reload to restart.');};
+ context.onstatechange=()=>{if(context.state!=='running'&&playing){playing=false;send({type:'run',value:false});syncPlay();status('Browser paused audio. Press Play to resume.');}};
+ node.port.onmessage=({data})=>{
+  if(data.type==='phrase'){historyEntry(data);['drums','bass','other'].forEach((r,i)=>$(r+'-variant').textContent='ABCD'[data.choices[i]]);$('change').textContent='Change phrase';}
+  if(data.type==='position'){
+   progress=data;$('elapsed').textContent=time(data.frame/context.sampleRate);$('phrase').textContent=data.phrase+1;$('bar').textContent=Math.floor(data.beat/4)%4+1;
+   document.querySelectorAll('.beat-row i').forEach((dot,i)=>dot.classList.toggle('active',playing&&i===Math.floor(data.beat)%4));
+  }
+  if(data.type==='record-start'){recordMeta.startFrame=data.frame;recordMeta.sampleRate=data.rate;}
+  if(data.type==='pcm'){chunks.push(data.data.buffer);recordFrames+=data.data.length/2;$('record-time').textContent=`${time(recordFrames/context.sampleRate)} / 5:00`;}
+  if(data.type==='record-end')finishWav(data);
+ };
+ updateControls();
+ if('mediaSession'in navigator){try{navigator.mediaSession.metadata=new MediaMetadata({title:'SIDE LYD',artist:'Loop mixer'});navigator.mediaSession.setActionHandler('play',()=>{if(!playing)$('play').click();});navigator.mediaSession.setActionHandler('pause',()=>{if(playing)$('play').click();});}catch{}}
+}
+function draw(){
+ const canvas=$('scope'),rect=canvas.getBoundingClientRect(),ratio=Math.min(devicePixelRatio||1,2);
+ if(canvas.width!==Math.round(rect.width*ratio)||canvas.height!==Math.round(rect.height*ratio)){canvas.width=Math.round(rect.width*ratio);canvas.height=Math.round(rect.height*ratio);}
+ const c=canvas.getContext('2d'),w=canvas.width,h=canvas.height;c.clearRect(0,0,w,h);c.strokeStyle='#6a795e';c.lineWidth=ratio;c.beginPath();
+ const data=new Float32Array(1024);if(analyser)analyser.getFloatTimeDomainData(data);
+ for(let i=0;i<data.length;i++){const x=i/(data.length-1)*w,y=h/2+data[i]*h*.85;if(!i)c.moveTo(x,y);else c.lineTo(x,y);}
+ c.strokeStyle=playing?'#d9ed92':'#607154';c.stroke();animation=requestAnimationFrame(draw);
+}
+async function loadBank(id){
+ const token=++request;abort?.abort();abort=new AbortController();const selected=catalog.banks.find(b=>b.id===id);if(!selected)return;
+ loading=true;syncPlay();status('Loading loops…');
+ try{
+  await setup();const assets=new Array(selected.assets.length);let cursor=0,finished=0;
+  async function worker(){while(cursor<selected.assets.length){const i=cursor++,asset=selected.assets[i];const response=await fetch(asset.src+'?v='+asset.sha256.slice(0,12),{signal:abort.signal});if(!response.ok)throw new Error(`Could not load ${asset.id}`);const bytes=await response.arrayBuffer();const decoded=await context.decodeAudioData(bytes);if(token!==request)return;assets[i]={...asset,channels:[decoded.getChannelData(0).slice(),decoded.getChannelData(Math.min(1,decoded.numberOfChannels-1)).slice()]};status(`Loading loops ${++finished}/${selected.assets.length}`);}}
+  await Promise.all([worker(),worker(),worker()]);if(token!==request)return;
+  if(recording)send({type:'record',value:false});
+  const resume=playing;send({type:'run',value:false});if(bank&&resume)await new Promise(r=>setTimeout(r,240));if(token!==request)return;
+  bank=selected;events=[];$('history').replaceChildren();
+  node.port.postMessage({type:'bank',bank:{...selected,assets},seed},assets.flatMap(a=>a.channels.map(c=>c.buffer)));
+  for(const a of assets)a.channels=null;
+  updateControls();send({type:'run',value:resume});
+  $('tempo').textContent=`${Number(selected.bpm.toFixed(2))} BPM`;
+  $('assets').textContent=`12 loops + ${selected.assets.length-12} FX`;
+  loading=false;syncPlay();persist();status(resume?'Mixing.':'Ready.');
+ }catch(error){if(token!==request)return;loading=false;if(error.name!=='AbortError'){if(bank)$('bank').value=bank.id;status(`${error.message}. Press Play to retry.`);}syncPlay();throw error;}
+}
+async function start(){
+ try{await setup();if(!bank||bank.id!==$('bank').value)await loadBank($('bank').value);await context.resume();playing=true;send({type:'run',value:true});syncPlay();status('Mixing.');if('mediaSession'in navigator)navigator.mediaSession.playbackState='playing';}
+ catch(error){playing=false;syncPlay();status(error.message);}
+}
+$('play').onclick=()=>{if(playing){playing=false;send({type:'run',value:false});if(recording)send({type:'record',value:false});syncPlay();status('Paused.');if('mediaSession'in navigator)navigator.mediaSession.playbackState='paused';}else if(!loading)start();};
+$('bank').onchange=()=>{const b=catalog.banks.find(b=>b.id===$('bank').value);$('tempo').textContent=`${Number(b.bpm.toFixed(2))} BPM`;$('assets').textContent=`12 loops + ${b.assets.length-12} FX`;if(context)loadBank(b.id).catch(()=>{});persist();};
+for(const key of names){$(key).value=controls[key];$(key+'-value').value=Math.round(controls[key]*100);$(key).oninput=()=>{controls[key]=Number($(key).value);$(key+'-value').value=Math.round(controls[key]*100);updateControls();historyEntry({type:`${key} ${Math.round(controls[key]*100)}`,frame:progress.frame});};}
+$('volume').value=master;$('volume-value').value=Math.round(master*100);$('volume').oninput=()=>{master=Number($('volume').value);$('volume-value').value=Math.round(master*100);updateControls();};
+$('hold').onclick=()=>{controls.hold=!controls.hold;$('hold').setAttribute('aria-pressed',String(controls.hold));updateControls();};
+$('change').onclick=()=>{send({type:'change'});$('change').textContent='Change queued';};
+async function reseed(){seed=Number($('seed').value)>>>0||1;$('seed').value=seed;if(bank){const resume=playing;if(recording)send({type:'record',value:false});send({type:'run',value:false});await new Promise(r=>setTimeout(r,240));send({type:'reseed',seed});events=[];send({type:'run',value:resume});}persist();}
+$('seed').value=seed;$('seed').onchange=()=>reseed();$('reseed').onclick=()=>{$('seed').value=crypto.getRandomValues(new Uint32Array(1))[0]||1;reseed();};
+$('save-recipe').onclick=()=>blobDownload(new Blob([JSON.stringify(recipe(),null,2)],{type:'application/json'}),'SIDE-LYD-recipe.json');
+$('record').onclick=()=>{if(recording){send({type:'record',value:false});return;}if(!playing)return;recording=true;chunks=[];recordFrames=0;wav=null;recordMeta={...recipe(),sampleRate:context.sampleRate};$('save-wav').disabled=true;$('record').textContent='Stop recording';$('record').setAttribute('aria-pressed','true');send({type:'record',value:true});status('Recording the loop mix. Maximum 5 minutes.');};
+$('save-wav').onclick=()=>{if(wav){blobDownload(wav,`SIDE-LYD-${recordMeta.kit}-${recordMeta.seed}.wav`);blobDownload(new Blob([JSON.stringify(recordMeta,null,2)],{type:'application/json'}),`SIDE-LYD-${recordMeta.kit}-${recordMeta.seed}.json`);}};
+window.sideLyd={getState:state,recipe};
+fetch('banks.json?v=2').then(r=>{if(!r.ok)throw new Error('Could not load loop banks.');return r.json();}).then(data=>{
+ catalog=data;for(const b of data.banks){const option=document.createElement('option');option.value=b.id;option.textContent=b.title;$('bank').append(option);}
+ let remembered;try{remembered=JSON.parse(localStorage.getItem('side-lyd-mixer-v1'))?.kit;}catch{}
+ const query=new URLSearchParams(location.search),requested=query.get('kit')||(query.get('channel')==='house'?'velvet-drive':remembered);
+ if(catalog.banks.some(b=>b.id===requested))$('bank').value=requested;
+ const b=catalog.banks.find(b=>b.id===$('bank').value);$('tempo').textContent=`${Number(b.bpm.toFixed(2))} BPM`;$('assets').textContent=`12 loops + ${b.assets.length-12} FX`;$('play').disabled=false;status('Ready.');draw();
+}).catch(error=>status(error.message));
