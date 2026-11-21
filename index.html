@@ -1,13 +1,13 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#151a17"><meta name="description" content="SIDE LYD loop mixer."><title>SIDE LYD</title><link rel="icon" href="icon.svg"><link rel="stylesheet" href="styles.css?v=choir-1"><script type="module" src="app.js?v=choir-1"></script>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#151a17"><meta name="description" content="SIDE LYD loop mixer."><title>SIDE LYD</title><link rel="icon" href="icon.svg"><link rel="stylesheet" href="styles.css?v=voices-2"><script type="module" src="app.js?v=voices-2"></script>
 </head>
 <body>
 <main class="player">
 <header><h1>SIDE LYD</h1><a href="https://github.com/technicallytechnicaldesign/side-lyd" target="_blank" rel="noopener">GitHub</a></header>
 <section class="console" aria-label="Loop mixer">
-<div class="bank-row"><label>Sound set<select id="bank" aria-label="Sound set"></select></label><div class="bank-info"><span id="tempo">â€” BPM</span><span id="assets">â€”</span></div></div>
+<div class="bank-row"><label>Sound set<select id="bank" aria-label="Sound set"></select></label><div class="bank-info"><span id="tempo">-- BPM</span><span id="assets">--</span></div></div>
 <div class="play-row"><button id="play" class="primary" type="button" disabled>Play</button><button id="change" type="button" disabled>Change phrase</button><button id="hold" type="button" aria-pressed="false">Hold</button><div class="counter"><span id="elapsed">0:00</span><span>BAR <b id="bar">1</b> / PHRASE <b id="phrase">1</b></span></div></div>
 <canvas id="scope" aria-label="Audio waveform"></canvas>
 <div class="beat-row" aria-hidden="true"><i></i><i></i><i></i><i></i><span id="position">STOPPED</span></div>
@@ -17,7 +17,13 @@
 <label><span>Music <b id="other-variant">A</b><output id="other-value">80</output></span><input id="other" type="range" min="0" max="1" value="0.8" step="0.01" aria-label="Music level"></label>
 <label><span>FX<output id="fx-value">80</output></span><input id="fx" type="range" min="0" max="1" value="0.8" step="0.01" aria-label="FX level"></label>
 </div>
-<div class="choir-row"><label>Choir <output id="choir-value">55</output><input id="choir" type="range" min="0" max="1" value="0.55" step="0.01" aria-label="Choir level"></label><button id="choir-now" type="button" disabled>Choir next phrase</button><span id="choir-state">Resting</span></div>
+<div class="vocal-controls">
+<label>Choir<output id="choir-value">55</output><input id="choir" type="range" min="0" max="1" value="0.55" step="0.01" aria-label="Choir level"></label>
+<label>Harmony<output id="harmony-value">0</output><input id="harmony" type="range" min="0" max="1" value="0" step="0.01" aria-label="Harmony level"></label>
+<label>Hah<output id="hah-value">36</output><input id="hah" type="range" min="0" max="1" value="0.36" step="0.01" aria-label="Hah level"></label>
+<label>Shh<output id="shh-value">30</output><input id="shh" type="range" min="0" max="1" value="0.3" step="0.01" aria-label="Shh level"></label>
+</div>
+<div class="vocal-actions"><button id="choir-now" type="button" disabled>Choir next phrase</button><span id="choir-state">Resting</span><button id="breath-now" type="button" disabled>Breaths next phrase</button><span id="breath-state">Resting</span></div>
 <div class="controls">
 <label>Energy<output id="energy-value">65</output><input id="energy" type="range" min="0" max="1" value="0.65" step="0.01"></label>
 <label>Variation<output id="variation-value">50</output><input id="variation" type="range" min="0" max="1" value="0.5" step="0.01"></label>

@@ -1,19 +1,19 @@
 const $=id=>document.getElementById(id);
-const names=['drums','bass','other','fx','choir','energy','variation','flavor'];
+const names=['drums','bass','other','fx','choir','harmony','hah','shh','energy','variation','flavor'];
 const time=s=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
-let catalog,bank,context,node,analyser,vocalDecoder,request=0,abort,loading=false,playing=false,recording=false,chunks=[],recordMeta=null,wav=null;
-let progress={frame:0,phrase:0,beat:0,peak:0},events=[],controls={drums:.8,bass:.8,other:.8,fx:.8,choir:.55,energy:.65,variation:.5,flavor:.3,hold:false};
+let catalog,bank,context,node,analyser,vocalDecoder,breathDecoder,request=0,abort,loading=false,playing=false,recording=false,chunks=[],recordMeta=null,wav=null;
+let progress={frame:0,phrase:0,beat:0,peak:0},events=[],controls={drums:.8,bass:.8,other:.8,fx:.8,choir:.55,harmony:0,hah:.36,shh:.3,energy:.65,variation:.5,flavor:.3,hold:false};
 let master=.7,seed=7431,animation=0,recordFrames=0;
 try{const saved=JSON.parse(localStorage.getItem('side-lyd-mixer-v1'));if(saved){seed=Number(saved.seed)>>>0||7431;for(const key of names)if(Number.isFinite(saved.controls?.[key]))controls[key]=Math.max(0,Math.min(1,saved.controls[key]));if(Number.isFinite(saved.master))master=Math.max(0,Math.min(1,saved.master));}}catch{}
 function status(message){$('status').textContent=message;}
 function persist(){try{localStorage.setItem('side-lyd-mixer-v1',JSON.stringify({kit:$('bank').value,seed,controls,master}));}catch{}}
 function send(data){node?.port.postMessage(data);}
 function updateControls(){send({type:'controls',value:controls,master});persist();}
-function syncPlay(){ $('play').textContent=playing?'Pause':loading?'LoadingÃ¢â‚¬Â¦':'Play';$('record').disabled=!playing&&!recording;$('change').disabled=!bank;$('position').textContent=playing?'MIXING LOOPS':'PAUSED'; }
-function state(){return {engine:'side-lyd-loop-mixer/3',processor:node?.constructor.name||null,sampleRate:context?.sampleRate,kit:bank?.id,seed,controls:{...controls},master,progress:{...progress},loadedAssets:bank?.assets.length||0,playing,recording,events:[...events]};}
+function syncPlay(){ $('play').textContent=playing?'Pause':loading?'Loading...':'Play';$('record').disabled=!playing&&!recording;$('change').disabled=!bank;$('position').textContent=playing?'MIXING LOOPS':'PAUSED'; }
+function state(){return {engine:'side-lyd-loop-mixer/4',processor:node?.constructor.name||null,sampleRate:context?.sampleRate,kit:bank?.id,seed,controls:{...controls},master,progress:{...progress},loadedAssets:bank?.assets.length||0,playing,recording,events:[...events]};}
 function blobDownload(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 function recipe(){return {schema:'side-lyd-loop-recipe/v1',savedAt:new Date().toISOString(),bankVersion:catalog.version,...state(),assets:bank?.assets.map(a=>({id:a.id,sha256:a.sha256})),reproduction:'Seed and controls define the initial run; manual control changes and saved phrase events are included as context, not an exact resume of effect tails.'};}
-function historyEntry(event){events.push(event);if(events.length>256)events.shift();const li=document.createElement('li');li.textContent=event.type==='phrase'?`Phrase ${event.phrase+1} / drums ${event.variants[0]} / bass ${event.variants[1]} / music ${event.variants[2]}`:event.type==='choir-start'?'Choir started':event.type==='choir-end'?'Choir ended':event.type;$('history').prepend(li);while($('history').children.length>24)$('history').lastChild.remove();}
+function historyEntry(event){events.push(event);if(events.length>256)events.shift();const li=document.createElement('li');li.textContent=event.type==='phrase'?`Phrase ${event.phrase+1} / drums ${event.variants[0]} / bass ${event.variants[1]} / music ${event.variants[2]}`:event.type==='choir-start'?'Choir started':event.type==='choir-end'?'Choir ended':event.type==='breath-phase'?event.role.toUpperCase()+(event.active?' in':' resting'):event.type==='harmony-start'?'Harmony in':event.type==='harmony-end'?'Harmony ended':event.type;$('history').prepend(li);while($('history').children.length>24)$('history').lastChild.remove();}
 function finishWav(data){
  recording=false;recordFrames=data.frames;
  recordMeta.endFrame=data.frame;recordMeta.recordedFrames=data.frames;
@@ -27,18 +27,18 @@ async function setup(){
  if(context&&node){await context.resume();return;}
  if(!context)context=new AudioContext({latencyHint:'playback'});await context.resume();
  if(!context.audioWorklet)throw new Error('This browser needs AudioWorklet support and HTTPS.');
- await context.audioWorklet.addModule('mixer-worklet.js?v=choir-1');
+ await context.audioWorklet.addModule('mixer-worklet.js?v=voices-2');
  node=new AudioWorkletNode(context,'side-lyd-mixer',{numberOfInputs:0,numberOfOutputs:1,outputChannelCount:[2]});
  analyser=context.createAnalyser();analyser.fftSize=1024;node.connect(analyser);analyser.connect(context.destination);
  node.onprocessorerror=()=>{playing=false;syncPlay();status('Audio engine stopped. Reload to restart.');};
  context.onstatechange=()=>{if(context.state!=='running'&&playing){playing=false;send({type:'run',value:false});syncPlay();status('Browser paused audio. Press Play to resume.');}};
  node.port.onmessage=({data})=>{
   if(data.type==='phrase'){historyEntry(data);['drums','bass','other'].forEach((r,i)=>$(r+'-variant').textContent=data.variants[i]);$('change').textContent='Change phrase';}
-  if(data.type==='position'){const v=data.choir;if(v){$('choir-state').textContent=controls.choir<=0?'Off':!playing?'Paused':v.active?'Singing '+time(v.seconds):v.queued?'Queued':v.nextIn>0?'Rest '+time(v.nextIn):'Waiting for phrase';$('choir-now').disabled=!playing||v.active||controls.choir<=0;}
-   progress=data;$('elapsed').textContent=time(data.frame/context.sampleRate);$('phrase').textContent=data.phrase+1;$('bar').textContent=Math.floor(data.beat/4)%4+1;
+  if(data.type==='position'){const v=data.choir;if(v){$('choir-state').textContent=controls.choir<=0&&controls.harmony<=0?'Off':!playing?'Paused':v.active?'Singing '+time(v.seconds)+(v.harmonies?' + '+v.harmonies+' harmony':''):v.queued?'Queued':v.nextIn>0?'Rest '+time(v.nextIn):'Waiting for phrase';$('choir-now').disabled=!playing||v.active||(controls.choir<=0&&controls.harmony<=0);}
+   const breaths=data.breaths||[];$('breath-state').textContent=breaths.filter(v=>v.active).map(v=>v.role).join(' + ')||'Resting';$('breath-now').disabled=!playing||(controls.hah<=0&&controls.shh<=0);progress=data;$('elapsed').textContent=time(data.frame/context.sampleRate);$('phrase').textContent=data.phrase+1;$('bar').textContent=Math.floor(data.beat/4)%4+1;
    document.querySelectorAll('.beat-row i').forEach((dot,i)=>dot.classList.toggle('active',playing&&i===Math.floor(data.beat)%4));
   }
-  if(data.type==='choir-start'||data.type==='choir-end')historyEntry(data);
+  if(['choir-start','choir-end','harmony-start','harmony-end','breath-phase'].includes(data.type))historyEntry(data);
   if(data.type==='record-start'){recordMeta.startFrame=data.frame;recordMeta.sampleRate=data.rate;}
   if(data.type==='pcm'){chunks.push(data.data.buffer);recordFrames+=data.data.length/2;$('record-time').textContent=`${time(recordFrames/context.sampleRate)} / 5:00`;}
   if(data.type==='record-end')finishWav(data);
@@ -59,7 +59,7 @@ async function loadBank(id){
  loading=true;syncPlay();status('Loading sounds...');
  try{
   await setup();const assets=new Array(selected.assets.length);let cursor=0,finished=0;
-  async function worker(){while(cursor<selected.assets.length){const i=cursor++,asset=selected.assets[i];const response=await fetch(asset.src+'?v='+asset.sha256.slice(0,12),{signal:abort.signal});if(!response.ok)throw new Error(`Could not load ${asset.id}`);const bytes=await response.arrayBuffer();const decoder=asset.kind==='vocal'?(vocalDecoder||(vocalDecoder=new OfflineAudioContext(2,1,24000))):context;const decoded=await decoder.decodeAudioData(bytes);if(token!==request)return;assets[i]={...asset,audioRate:decoded.sampleRate,channels:[decoded.getChannelData(0).slice(),decoded.getChannelData(Math.min(1,decoded.numberOfChannels-1)).slice()]};status(`Loading sounds ${++finished}/${selected.assets.length}`);}}
+  async function worker(){while(cursor<selected.assets.length){const i=cursor++,asset=selected.assets[i];const response=await fetch(asset.src+'?v='+asset.sha256.slice(0,12),{signal:abort.signal});if(!response.ok)throw new Error(`Could not load ${asset.id}`);const bytes=await response.arrayBuffer();const decoder=asset.kind==='breath'?(breathDecoder||(breathDecoder=new OfflineAudioContext(2,1,16000))):['vocal','harmony'].includes(asset.kind)?(vocalDecoder||(vocalDecoder=new OfflineAudioContext(2,1,24000))):context;const decoded=await decoder.decodeAudioData(bytes);if(token!==request)return;assets[i]={...asset,audioRate:decoded.sampleRate,channels:[decoded.getChannelData(0).slice(),decoded.getChannelData(Math.min(1,decoded.numberOfChannels-1)).slice()]};status(`Loading sounds ${++finished}/${selected.assets.length}`);}}
   await Promise.all([worker(),worker(),worker()]);if(token!==request)return;
   if(recording)send({type:'record',value:false});
   const resume=playing;send({type:'run',value:false});if(bank&&resume)await new Promise(r=>setTimeout(r,240));if(token!==request)return;
@@ -68,7 +68,7 @@ async function loadBank(id){
   for(const a of assets)a.channels=null;
   updateControls();send({type:'run',value:resume});
   $('tempo').textContent=`${Number(selected.bpm.toFixed(2))} BPM`;
-  $('assets').textContent=`${selected.assets.filter(a=>a.kind==='loop').length} loops + ${selected.assets.filter(a=>a.kind!=='loop'&&a.kind!=='vocal').length} FX`;
+  $('assets').textContent=`${selected.assets.filter(a=>a.kind==='loop').length} loops + ${selected.assets.filter(a=>['flavor','cover','detail'].includes(a.kind)).length} FX`;
   loading=false;syncPlay();persist();status(resume?'Mixing.':'Ready.');
  }catch(error){if(token!==request)return;loading=false;if(error.name!=='AbortError'){if(bank)$('bank').value=bank.id;status(`${error.message}. Press Play to retry.`);}syncPlay();throw error;}
 }
@@ -77,7 +77,7 @@ async function start(){
  catch(error){playing=false;syncPlay();status(error.message);}
 }
 $('play').onclick=()=>{if(playing){playing=false;send({type:'run',value:false});if(recording)send({type:'record',value:false});syncPlay();status('Paused.');if('mediaSession'in navigator)navigator.mediaSession.playbackState='paused';}else if(!loading)start();};
-$('bank').onchange=()=>{const b=catalog.banks.find(b=>b.id===$('bank').value);$('tempo').textContent=`${Number(b.bpm.toFixed(2))} BPM`;$('assets').textContent=`${b.assets.filter(a=>a.kind==='loop').length} loops + ${b.assets.filter(a=>a.kind!=='loop'&&a.kind!=='vocal').length} FX`;if(context)loadBank(b.id).catch(()=>{});persist();};
+$('bank').onchange=()=>{const b=catalog.banks.find(b=>b.id===$('bank').value);$('tempo').textContent=`${Number(b.bpm.toFixed(2))} BPM`;$('assets').textContent=`${b.assets.filter(a=>a.kind==='loop').length} loops + ${b.assets.filter(a=>['flavor','cover','detail'].includes(a.kind)).length} FX`;if(context)loadBank(b.id).catch(()=>{});persist();};
 for(const key of names){$(key).value=controls[key];$(key+'-value').value=Math.round(controls[key]*100);$(key).oninput=()=>{controls[key]=Number($(key).value);$(key+'-value').value=Math.round(controls[key]*100);updateControls();historyEntry({type:`${key} ${Math.round(controls[key]*100)}`,frame:progress.frame});};}
 $('volume').value=master;$('volume-value').value=Math.round(master*100);$('volume').oninput=()=>{master=Number($('volume').value);$('volume-value').value=Math.round(master*100);updateControls();};
 $('hold').onclick=()=>{controls.hold=!controls.hold;$('hold').setAttribute('aria-pressed',String(controls.hold));updateControls();};
@@ -88,11 +88,13 @@ $('save-recipe').onclick=()=>blobDownload(new Blob([JSON.stringify(recipe(),null
 $('record').onclick=()=>{if(recording){send({type:'record',value:false});return;}if(!playing)return;recording=true;chunks=[];recordFrames=0;wav=null;recordMeta={...recipe(),sampleRate:context.sampleRate};$('save-wav').disabled=true;$('record').textContent='Stop recording';$('record').setAttribute('aria-pressed','true');send({type:'record',value:true});status('Recording the loop mix. Maximum 5 minutes.');};
 $('save-wav').onclick=()=>{if(wav){blobDownload(wav,`SIDE-LYD-${recordMeta.kit}-${recordMeta.seed}.wav`);blobDownload(new Blob([JSON.stringify(recordMeta,null,2)],{type:'application/json'}),`SIDE-LYD-${recordMeta.kit}-${recordMeta.seed}.json`);}};
 window.sideLyd={getState:state,recipe};
-fetch('banks.json?v=choir-1').then(r=>{if(!r.ok)throw new Error('Could not load loop banks.');return r.json();}).then(data=>{
+fetch('banks.json?v=voices-2').then(r=>{if(!r.ok)throw new Error('Could not load loop banks.');return r.json();}).then(data=>{
  catalog=data;for(const b of data.banks){const option=document.createElement('option');option.value=b.id;option.textContent=b.title;$('bank').append(option);}
  let remembered;try{remembered=JSON.parse(localStorage.getItem('side-lyd-mixer-v1'))?.kit;}catch{}
  const query=new URLSearchParams(location.search),requested=query.get('kit')||(query.get('channel')==='house'?'velvet-drive':remembered);
  if(catalog.banks.some(b=>b.id===requested))$('bank').value=requested;
- const b=catalog.banks.find(b=>b.id===$('bank').value);$('tempo').textContent=`${Number(b.bpm.toFixed(2))} BPM`;$('assets').textContent=`${b.assets.filter(a=>a.kind==='loop').length} loops + ${b.assets.filter(a=>a.kind!=='loop'&&a.kind!=='vocal').length} FX`;$('play').disabled=false;status('Ready.');draw();
+ const b=catalog.banks.find(b=>b.id===$('bank').value);$('tempo').textContent=`${Number(b.bpm.toFixed(2))} BPM`;$('assets').textContent=`${b.assets.filter(a=>a.kind==='loop').length} loops + ${b.assets.filter(a=>['flavor','cover','detail'].includes(a.kind)).length} FX`;$('play').disabled=false;status('Ready.');draw();
 }).catch(error=>status(error.message));
 $('choir-now').onclick=()=>{send({type:'choir'});status('Choir queued for the next phrase.');};
+
+$('breath-now').onclick=()=>{send({type:'breaths'});status('Breaths queued for the next phrase.');};

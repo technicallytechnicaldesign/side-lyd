@@ -2,7 +2,7 @@ export class Mixer {
   constructor(rate, emit = () => {}) {
     this.rate = rate; this.emit = emit; this.bank = null; this.running = false;
     this.frame = 0; this.phrase = -1; this.local = 0; this.voices = [];
-    this.controls = {energy: .65, variation: .5, flavor: .3, drums: .8, bass: .8, other: .8, fx: .8, choir: .55, hold: false};
+    this.controls = {energy: .65, variation: .5, flavor: .3, drums: .8, bass: .8, other: .8, fx: .8, choir: .55, harmony: 0, hah: .36, shh: .3, hold: false};
     this.levels = [0, 0, 0]; this.targets = [0, 0, 0]; this.choices = [0, 0, 0];
     this.prng = 1; this.seed = 1; this.force = false; this.fade = 0; this.master = .7;
     this.lastReport = 0; this.event = 0; this.fadeSamples = [Math.round(rate * .008), Math.round(rate * .025), Math.round(rate * .48)];
@@ -19,15 +19,32 @@ export class Mixer {
     this.details=bank.assets.filter(a=>a.kind==='detail');this.detailChoice=-1;this.detailPrevious=-1;this.detailOn=false;this.detailOldOn=false;this.detailLevel=0;
     this.autoLevels=[0,0,0];this.bags=[[],[],[]];this.lastLane=-1;this.lastChange=-10;this.lastFlavor=-10;
     this.vocalAssets=bank.assets.filter(a=>a.kind==='vocal');this.vocal=null;this.vocalGain=0;this.vocalPrng=(this.seed^0x9e3779b9)>>>0||1;this.vocalNext=Math.ceil(this.phraseLength);this.vocalForce=false;this.vocalLastEnd=null;
+    this.harmonyAssets=bank.assets.filter(a=>a.kind==='harmony');this.harmonyGain=0;
+    this.breathPrng=(this.seed^0x85ebca6b)>>>0||1;this.breathForce=false;
+    this.breaths=['hah','shh'].map((role,i)=>({role,assets:bank.assets.filter(a=>a.kind==='breath'&&a.role===role),choice:-1,oldChoice:-1,active:false,level:0,next:i+1}));
     this.event = 0; this.fade = 0; this.beginPhrase();
   }
   vocalRandom(){let x=this.vocalPrng|0;x^=x<<13;x^=x>>>17;x^=x<<5;this.vocalPrng=x>>>0;return this.vocalPrng/4294967296;}
+  breathRandom(){let x=this.breathPrng|0;x^=x<<13;x^=x>>>17;x^=x<<5;this.breathPrng=x>>>0;return this.breathPrng/4294967296;}
+  beginBreaths(){
+    for(const voice of this.breaths){
+      voice.oldChoice=voice.choice;
+      if(!voice.assets.length||(!this.breathForce&&(this.controls.hold||this.phrase<voice.next)))continue;
+      voice.active=this.breathForce||!voice.active;
+      if(voice.active){const previous=voice.choice;voice.choice=Math.floor(this.breathRandom()*voice.assets.length);if(voice.choice===previous)voice.choice=(voice.choice+1)%voice.assets.length;}
+      voice.next=this.phrase+(voice.active?1+Math.floor(this.breathRandom()*2):2+Math.floor(this.breathRandom()*3));
+      this.emit({type:'breath-phase',frame:this.frame,phrase:this.phrase,role:voice.role,active:voice.active,id:voice.assets[voice.choice]?.id||null});
+    }
+    this.breathForce=false;
+  }
+  breathState(){return this.breaths.map(v=>({role:v.role,active:v.active&&this.controls[v.role]>0,id:v.assets[v.choice]?.id||null}));}
   finishVocal(reason='ended'){
     if(!this.vocal)return;
-    this.emit({type:'choir-end',frame:this.frame,id:this.vocal.asset.id,reason});this.vocal=null;this.vocalGain=0;this.vocalLastEnd=this.frame;this.vocalNext=this.frame+Math.round(this.rate*(40+20*this.vocalRandom()));
+    for(const part of this.vocal.parts)if(part.announced&&!part.ended)this.emit({type:'harmony-end',frame:this.frame,id:part.asset.id,reason});
+    this.emit({type:'choir-end',frame:this.frame,id:this.vocal.asset.id,reason});this.vocal=null;this.vocalGain=0;this.harmonyGain=0;this.vocalLastEnd=this.frame;this.vocalNext=this.frame+Math.round(this.rate*(40+20*this.vocalRandom()));
   }
   startVocal(previous){
-    if(this.vocal||!this.vocalAssets.length||this.controls.choir<=0)return;
+    if(this.vocal||!this.vocalAssets.length||(this.controls.choir<=0&&this.controls.harmony<=0))return;
     const manual=this.vocalForce;
     if(!manual&&this.frame<this.vocalNext)return;
     let candidates=this.vocalAssets.filter(a=>a.variants.includes(this.variants[this.choices[2]]));
@@ -39,10 +56,11 @@ export class Mixer {
       if(this.force&&index===previous[1]&&index===previous[2])this.choices[0]=this.nextVariant(0);
     }
     const asset=candidates[Math.floor(this.vocalRandom()*candidates.length)];
-    this.vocal={asset,position:0,variant:this.variants[this.choices[2]],step:(asset.audioRate||this.rate)/this.rate};this.vocalGain=0;this.vocalForce=false;
+    const parts=this.harmonyAssets.filter(a=>a.parentId===asset.id).map(a=>({asset:a,offset:a.offsetBeats*this.beatLength,step:(a.audioRate||this.rate)/this.rate,announced:false,ended:false}));
+    this.vocal={asset,position:0,elapsed:0,parts,variant:this.variants[this.choices[2]],step:(asset.audioRate||this.rate)/this.rate};this.vocalGain=0;this.harmonyGain=0;this.vocalForce=false;
     this.emit({type:'choir-start',frame:this.frame,id:asset.id,variant:this.vocal.variant,manual,gapSeconds:this.vocalLastEnd===null?null:(this.frame-this.vocalLastEnd)/this.rate,durationSeconds:asset.channels[0].length/(asset.audioRate||this.rate)});
   }
-  vocalState(){return {active:!!this.vocal,id:this.vocal?.asset.id||null,seconds:this.vocal?this.vocal.position/(this.vocal.asset.audioRate||this.rate):0,nextIn:Math.max(0,(this.vocalNext-this.frame)/this.rate),queued:this.vocalForce};}
+  vocalState(){return {active:!!this.vocal,id:this.vocal?.asset.id||null,seconds:this.vocal?this.vocal.position/(this.vocal.asset.audioRate||this.rate):0,harmonies:this.vocal?.parts.filter(p=>p.announced&&!p.ended).length||0,nextIn:Math.max(0,(this.vocalNext-this.frame)/this.rate),queued:this.vocalForce};}
   nextVariant(role){
     if(!this.bags[role].length){
       this.bags[role]=this.variants.map((_,i)=>i).filter(i=>i!==this.choices[role]);
@@ -67,6 +85,7 @@ export class Mixer {
       }
     }
     if(p>0)this.startVocal(previous);
+    this.beginBreaths();
     this.force = false;
     let density = .67 + .15*Math.sin(p*Math.PI/9) + (this.random()-.5)*.12;
     if (c.hold && p > 0) density = this.density;
@@ -100,7 +119,7 @@ export class Mixer {
   render(left, right) {
     for (let i = 0; i < left.length; i++) {
       if (!this.bank || (!this.running && this.fade < .0001)) { left[i] = 0; right[i] = 0; continue; }
-      if(this.vocal&&(this.vocal.position>=this.vocal.asset.channels[0].length||(this.controls.choir<=0&&this.vocalGain<.0001)))this.finishVocal(this.controls.choir<=0?'muted':'ended');
+      if(this.vocal&&(this.vocal.position>=this.vocal.asset.channels[0].length||(this.controls.choir<=0&&this.controls.harmony<=0&&this.vocalGain<.0001&&this.harmonyGain<.0001)))this.finishVocal(this.controls.choir<=0&&this.controls.harmony<=0?'muted':'ended');
       const phrase = Math.floor(this.frame / this.phraseLength);
       while (phrase > this.phrase) this.beginPhrase();
       const local = this.frame - this.phrase * this.phraseLength;
@@ -143,11 +162,31 @@ export class Mixer {
         r += this.sample(voice.asset,voice.position,1,false) * gain;
         voice.position++;
       }
+      let vl=0,vr=0;
+      for(const voice of this.breaths){
+        const target=voice.active?this.controls[voice.role]:0;voice.level+=(target-voice.level)*this.detailSlew;
+        if(voice.choice<0||voice.level<.00001)continue;
+        const asset=voice.assets[voice.choice],pos=local/this.phraseLength*asset.channels[0].length;
+        let a=this.sample(asset,pos,0),b=this.sample(asset,pos,1);
+        if(voice.oldChoice>=0&&voice.oldChoice!==voice.choice&&local<this.rate*.18){const old=voice.assets[voice.oldChoice],x=local/(this.rate*.18),op=local/this.phraseLength*old.channels[0].length;a=a*x+this.sample(old,op,0)*(1-x);b=b*x+this.sample(old,op,1)*(1-x);}
+        vl+=a*voice.level;vr+=b*voice.level;
+      }
       if(this.vocal){
         this.vocalGain+=(this.controls.choir-this.vocalGain)*this.detailSlew;
-        l+=this.sample(this.vocal.asset,this.vocal.position,0,false)*this.vocalGain;r+=this.sample(this.vocal.asset,this.vocal.position,1,false)*this.vocalGain;
-        this.vocal.position+=this.vocal.step;
+        this.harmonyGain+=(this.controls.harmony-this.harmonyGain)*this.detailSlew;
+        vl+=this.sample(this.vocal.asset,this.vocal.position,0,false)*this.vocalGain;vr+=this.sample(this.vocal.asset,this.vocal.position,1,false)*this.vocalGain;
+        for(const part of this.vocal.parts){
+          const position=(this.vocal.elapsed-part.offset)*part.step;
+          if(position<0)continue;
+          if(position>=part.asset.channels[0].length){if(part.announced&&!part.ended)this.emit({type:'harmony-end',frame:this.frame,id:part.asset.id,reason:'ended'});part.ended=true;continue;}
+          if(this.harmonyGain>.0001){
+            if(!part.announced){this.emit({type:'harmony-start',frame:this.frame,id:part.asset.id,parentId:this.vocal.asset.id,offsetBeats:part.asset.offsetBeats,beats:part.asset.beats});part.announced=true;}
+            const g=this.harmonyGain*(part.asset.beats===16?.65:.5);vl+=this.sample(part.asset,position,0,false)*g;vr+=this.sample(part.asset,position,1,false)*g;
+          }
+        }
+        this.vocal.position+=this.vocal.step;this.vocal.elapsed++;
       }
+      l+=.14*Math.tanh(vl/.14);r+=.14*Math.tanh(vr/.14);
       this.fade += ((this.running ? 1 : 0) - this.fade) * this.fadeSlew;
       const gain = this.fade * this.master;
       left[i] = Math.tanh(l * gain); right[i] = Math.tanh(r * gain);
