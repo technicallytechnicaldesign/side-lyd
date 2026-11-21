@@ -1,4 +1,4 @@
-import {Mixer} from './mixer-core.js?v=3';
+import {Mixer} from './mixer-core.js?v=3b';
 
 class LoopProcessor extends AudioWorkletProcessor {
   constructor() {

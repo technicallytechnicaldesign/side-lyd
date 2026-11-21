@@ -52,7 +52,7 @@ export class Mixer {
     const variant = this.variants[this.choices[2]];
     if (p > 0 && c.flavor > 0 && p-this.lastFlavor>=2 && this.random() < c.flavor * .8) {
       const choices = this.bank.assets.filter(a => a.kind === 'flavor' && a.variant === variant);
-      if (choices.length){this.pending.push({at: this.beatLength * [5,7.5,10,12][Math.floor(this.random()*4)], asset: choices[Math.floor(this.random() * choices.length)], gain: .3 + .7 * c.flavor});this.lastFlavor=p;}
+      if (choices.length){const asset=choices[Math.floor(this.random()*choices.length)],positions=asset.placementBeats||[6];this.pending.push({at:this.beatLength*positions[Math.floor(this.random()*positions.length)],asset,gain:.3+.7*c.flavor});this.lastFlavor=p;}
     }
     if (p > 0 && (this.changed[1]||this.changed[2]) && c.flavor > 0) {
       const covers = this.bank.assets.filter(a => a.kind === 'cover' && a.variant === variant);

@@ -9,11 +9,11 @@ function status(message){$('status').textContent=message;}
 function persist(){try{localStorage.setItem('side-lyd-mixer-v1',JSON.stringify({kit:$('bank').value,seed,controls,master}));}catch{}}
 function send(data){node?.port.postMessage(data);}
 function updateControls(){send({type:'controls',value:controls,master});persist();}
-function syncPlay(){ $('play').textContent=playing?'Pause':loading?'Loadingâ€¦':'Play';$('record').disabled=!playing&&!recording;$('change').disabled=!bank;$('position').textContent=playing?'MIXING LOOPS':'PAUSED'; }
+function syncPlay(){ $('play').textContent=playing?'Pause':loading?'LoadingÃ¢â‚¬Â¦':'Play';$('record').disabled=!playing&&!recording;$('change').disabled=!bank;$('position').textContent=playing?'MIXING LOOPS':'PAUSED'; }
 function state(){return {engine:'side-lyd-loop-mixer/2',processor:node?.constructor.name||null,sampleRate:context?.sampleRate,kit:bank?.id,seed,controls:{...controls},master,progress:{...progress},loadedAssets:bank?.assets.length||0,playing,recording,events:[...events]};}
 function blobDownload(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 function recipe(){return {schema:'side-lyd-loop-recipe/v1',savedAt:new Date().toISOString(),bankVersion:catalog.version,...state(),assets:bank?.assets.map(a=>({id:a.id,sha256:a.sha256})),reproduction:'Seed and controls define the initial run; manual control changes and saved phrase events are included as context, not an exact resume of effect tails.'};}
-function historyEntry(event){events.push(event);if(events.length>256)events.shift();const li=document.createElement('li');li.textContent=event.type==='phrase'?`Phrase ${event.phrase+1} Â· drums ${'ABCD'[event.choices[0]]} Â· bass/music ${'ABCD'[event.choices[1]]}`:event.type;$('history').prepend(li);while($('history').children.length>24)$('history').lastChild.remove();}
+function historyEntry(event){events.push(event);if(events.length>256)events.shift();const li=document.createElement('li');li.textContent=event.type==='phrase'?`Phrase ${event.phrase+1} Ã‚Â· drums ${'ABCD'[event.choices[0]]} Ã‚Â· bass/music ${'ABCD'[event.choices[1]]}`:event.type;$('history').prepend(li);while($('history').children.length>24)$('history').lastChild.remove();}
 function finishWav(data){
  recording=false;recordFrames=data.frames;
  recordMeta.endFrame=data.frame;recordMeta.recordedFrames=data.frames;
@@ -27,7 +27,7 @@ async function setup(){
  if(context&&node){await context.resume();return;}
  if(!context)context=new AudioContext({latencyHint:'playback'});await context.resume();
  if(!context.audioWorklet)throw new Error('This browser needs AudioWorklet support and HTTPS.');
- await context.audioWorklet.addModule('mixer-worklet.js?v=3');
+ await context.audioWorklet.addModule('mixer-worklet.js?v=3b');
  node=new AudioWorkletNode(context,'side-lyd-mixer',{numberOfInputs:0,numberOfOutputs:1,outputChannelCount:[2]});
  analyser=context.createAnalyser();analyser.fftSize=1024;node.connect(analyser);analyser.connect(context.destination);
  node.onprocessorerror=()=>{playing=false;syncPlay();status('Audio engine stopped. Reload to restart.');};
@@ -55,7 +55,7 @@ function draw(){
 }
 async function loadBank(id){
  const token=++request;abort?.abort();abort=new AbortController();const selected=catalog.banks.find(b=>b.id===id);if(!selected)return;
- loading=true;syncPlay();status('Loading loopsâ€¦');
+ loading=true;syncPlay();status('Loading loopsÃ¢â‚¬Â¦');
  try{
   await setup();const assets=new Array(selected.assets.length);let cursor=0,finished=0;
   async function worker(){while(cursor<selected.assets.length){const i=cursor++,asset=selected.assets[i];const response=await fetch(asset.src+'?v='+asset.sha256.slice(0,12),{signal:abort.signal});if(!response.ok)throw new Error(`Could not load ${asset.id}`);const bytes=await response.arrayBuffer();const decoded=await context.decodeAudioData(bytes);if(token!==request)return;assets[i]={...asset,channels:[decoded.getChannelData(0).slice(),decoded.getChannelData(Math.min(1,decoded.numberOfChannels-1)).slice()]};status(`Loading loops ${++finished}/${selected.assets.length}`);}}
@@ -87,7 +87,7 @@ $('save-recipe').onclick=()=>blobDownload(new Blob([JSON.stringify(recipe(),null
 $('record').onclick=()=>{if(recording){send({type:'record',value:false});return;}if(!playing)return;recording=true;chunks=[];recordFrames=0;wav=null;recordMeta={...recipe(),sampleRate:context.sampleRate};$('save-wav').disabled=true;$('record').textContent='Stop recording';$('record').setAttribute('aria-pressed','true');send({type:'record',value:true});status('Recording the loop mix. Maximum 5 minutes.');};
 $('save-wav').onclick=()=>{if(wav){blobDownload(wav,`SIDE-LYD-${recordMeta.kit}-${recordMeta.seed}.wav`);blobDownload(new Blob([JSON.stringify(recordMeta,null,2)],{type:'application/json'}),`SIDE-LYD-${recordMeta.kit}-${recordMeta.seed}.json`);}};
 window.sideLyd={getState:state,recipe};
-fetch('banks.json?v=3').then(r=>{if(!r.ok)throw new Error('Could not load loop banks.');return r.json();}).then(data=>{
+fetch('banks.json?v=3b').then(r=>{if(!r.ok)throw new Error('Could not load loop banks.');return r.json();}).then(data=>{
  catalog=data;for(const b of data.banks){const option=document.createElement('option');option.value=b.id;option.textContent=b.title;$('bank').append(option);}
  let remembered;try{remembered=JSON.parse(localStorage.getItem('side-lyd-mixer-v1'))?.kit;}catch{}
  const query=new URLSearchParams(location.search),requested=query.get('kit')||(query.get('channel')==='house'?'velvet-drive':remembered);
