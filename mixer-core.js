@@ -2,7 +2,7 @@ export class Mixer {
   constructor(rate, emit = () => {}) {
     this.rate = rate; this.emit = emit; this.bank = null; this.running = false;
     this.frame = 0; this.phrase = -1; this.local = 0; this.voices = [];
-    this.controls = {energy: .65, variation: .5, flavor: .3, drums: .8, bass: .8, other: .8, fx: .8, hold: false};
+    this.controls = {energy: .65, variation: .5, flavor: .3, drums: .8, bass: .8, other: .8, fx: .8, choir: .55, hold: false};
     this.levels = [0, 0, 0]; this.targets = [0, 0, 0]; this.choices = [0, 0, 0];
     this.prng = 1; this.seed = 1; this.force = false; this.fade = 0; this.master = .7;
     this.lastReport = 0; this.event = 0; this.fadeSamples = [Math.round(rate * .008), Math.round(rate * .025), Math.round(rate * .48)];
@@ -18,8 +18,31 @@ export class Mixer {
     this.loops = this.roleNames.map(role => this.variants.map(v => bank.assets.find(a => a.kind === 'loop' && a.role === role && a.variant === v)));
     this.details=bank.assets.filter(a=>a.kind==='detail');this.detailChoice=-1;this.detailPrevious=-1;this.detailOn=false;this.detailOldOn=false;this.detailLevel=0;
     this.autoLevels=[0,0,0];this.bags=[[],[],[]];this.lastLane=-1;this.lastChange=-10;this.lastFlavor=-10;
+    this.vocalAssets=bank.assets.filter(a=>a.kind==='vocal');this.vocal=null;this.vocalGain=0;this.vocalPrng=(this.seed^0x9e3779b9)>>>0||1;this.vocalNext=Math.ceil(this.phraseLength);this.vocalForce=false;this.vocalLastEnd=null;
     this.event = 0; this.fade = 0; this.beginPhrase();
   }
+  vocalRandom(){let x=this.vocalPrng|0;x^=x<<13;x^=x>>>17;x^=x<<5;this.vocalPrng=x>>>0;return this.vocalPrng/4294967296;}
+  finishVocal(reason='ended'){
+    if(!this.vocal)return;
+    this.emit({type:'choir-end',frame:this.frame,id:this.vocal.asset.id,reason});this.vocal=null;this.vocalGain=0;this.vocalLastEnd=this.frame;this.vocalNext=this.frame+Math.round(this.rate*(40+20*this.vocalRandom()));
+  }
+  startVocal(previous){
+    if(this.vocal||!this.vocalAssets.length||this.controls.choir<=0)return;
+    const manual=this.vocalForce;
+    if(!manual&&this.frame<this.vocalNext)return;
+    let candidates=this.vocalAssets.filter(a=>a.variants.includes(this.variants[this.choices[2]]));
+    if(!candidates.length&&this.controls.hold&&!manual)return;
+    if(!candidates.length){
+      candidates=this.vocalAssets;const alternatives=candidates.filter(a=>!a.variants.includes(this.variants[previous[2]]));if(this.force&&alternatives.length)candidates=alternatives;
+      const chosen=candidates[Math.floor(this.vocalRandom()*candidates.length)],index=this.variants.indexOf(chosen.variants[0]);
+      this.choices[0]=previous[0];this.choices[1]=index;this.choices[2]=index;this.lastLane=1;this.lastChange=this.phrase;candidates=[chosen];
+      if(this.force&&index===previous[1]&&index===previous[2])this.choices[0]=this.nextVariant(0);
+    }
+    const asset=candidates[Math.floor(this.vocalRandom()*candidates.length)];
+    this.vocal={asset,position:0,variant:this.variants[this.choices[2]],step:(asset.audioRate||this.rate)/this.rate};this.vocalGain=0;this.vocalForce=false;
+    this.emit({type:'choir-start',frame:this.frame,id:asset.id,variant:this.vocal.variant,manual,gapSeconds:this.vocalLastEnd===null?null:(this.frame-this.vocalLastEnd)/this.rate,durationSeconds:asset.channels[0].length/(asset.audioRate||this.rate)});
+  }
+  vocalState(){return {active:!!this.vocal,id:this.vocal?.asset.id||null,seconds:this.vocal?this.vocal.position/(this.vocal.asset.audioRate||this.rate):0,nextIn:Math.max(0,(this.vocalNext-this.frame)/this.rate),queued:this.vocalForce};}
   nextVariant(role){
     if(!this.bags[role].length){
       this.bags[role]=this.variants.map((_,i)=>i).filter(i=>i!==this.choices[role]);
@@ -34,12 +57,16 @@ export class Mixer {
     const change = this.force || (!c.hold && p > 0 && p-this.lastChange>=(c.variation>.8?1:2) && this.random() < .3 + c.variation * .6);
     if (change) {
       const shared=this.bank.tonalMode==='shared-progression';
-      const available=(shared?[0,1,2]:[0,1]).filter(lane=>lane!==this.lastLane);
-      const lane=available[Math.floor(this.random()*available.length)];
-      if(!shared&&lane===1){this.choices[1]=this.nextVariant(1);this.choices[2]=this.choices[1];}
-      else this.choices[lane]=this.nextVariant(lane);
-      this.lastLane=lane;this.lastChange=p;
+      const locked=this.vocal&&!shared;
+      let available=(locked?[0]:(shared?[0,1,2]:[0,1])).filter(lane=>lane!==this.lastLane);
+      if(this.force&&!available.length&&locked)available=[0];
+      if(available.length){const lane=available[Math.floor(this.random()*available.length)];
+        if(!shared&&lane===1){this.choices[1]=this.nextVariant(1);this.choices[2]=this.choices[1];}
+        else this.choices[lane]=this.nextVariant(lane);
+        this.lastLane=lane;this.lastChange=p;
+      }
     }
+    if(p>0)this.startVocal(previous);
     this.force = false;
     let density = .67 + .15*Math.sin(p*Math.PI/9) + (this.random()-.5)*.12;
     if (c.hold && p > 0) density = this.density;
@@ -61,7 +88,7 @@ export class Mixer {
     }
     this.detailPrevious=this.detailChoice;this.detailOldOn=this.detailOn;
     if(!c.hold&&p%2===0&&this.details.length){this.detailChoice=(Math.max(0,this.detailChoice)+1+Math.floor(this.random()*Math.max(1,this.details.length-1)))%this.details.length;this.detailOn=c.flavor>0&&this.random()<.3+c.flavor*.5;}
-    this.emit({type:'phrase', phrase:p, frame:Math.round(p * this.phraseLength), choices:[...this.choices], variants:this.choices.map(n=>this.variants[n]), targets:[...this.targets], detail:this.detailOn?this.detailChoice:null, seed:this.seed, event:++this.event});
+    this.emit({type:'phrase', phrase:p, frame:this.frame, choices:[...this.choices], variants:this.choices.map(n=>this.variants[n]), targets:[...this.targets], detail:this.detailOn?this.detailChoice:null, seed:this.seed, event:++this.event});
   }
   sample(asset, position, channel, wrap = true) {
     const data = asset?.channels?.[channel]; if (!data?.length) return 0;
@@ -73,6 +100,7 @@ export class Mixer {
   render(left, right) {
     for (let i = 0; i < left.length; i++) {
       if (!this.bank || (!this.running && this.fade < .0001)) { left[i] = 0; right[i] = 0; continue; }
+      if(this.vocal&&(this.vocal.position>=this.vocal.asset.channels[0].length||(this.controls.choir<=0&&this.vocalGain<.0001)))this.finishVocal(this.controls.choir<=0?'muted':'ended');
       const phrase = Math.floor(this.frame / this.phraseLength);
       while (phrase > this.phrase) this.beginPhrase();
       const local = this.frame - this.phrase * this.phraseLength;
@@ -114,6 +142,11 @@ export class Mixer {
         l += this.sample(voice.asset,voice.position,0,false) * gain;
         r += this.sample(voice.asset,voice.position,1,false) * gain;
         voice.position++;
+      }
+      if(this.vocal){
+        this.vocalGain+=(this.controls.choir-this.vocalGain)*this.detailSlew;
+        l+=this.sample(this.vocal.asset,this.vocal.position,0,false)*this.vocalGain;r+=this.sample(this.vocal.asset,this.vocal.position,1,false)*this.vocalGain;
+        this.vocal.position+=this.vocal.step;
       }
       this.fade += ((this.running ? 1 : 0) - this.fade) * this.fadeSlew;
       const gain = this.fade * this.master;

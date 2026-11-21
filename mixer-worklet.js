@@ -1,4 +1,4 @@
-import {Mixer} from './mixer-core.js?v=3b';
+import {Mixer} from './mixer-core.js?v=choir-1';
 
 class LoopProcessor extends AudioWorkletProcessor {
   constructor() {
@@ -9,6 +9,7 @@ class LoopProcessor extends AudioWorkletProcessor {
       if(data.type==='run') this.mixer.running=data.value;
       if(data.type==='reseed'&&this.mixer.bank) this.mixer.setBank(this.mixer.bank,data.seed);
       if(data.type==='change') this.mixer.force=true;
+      if(data.type==='choir') this.mixer.vocalForce=true;
       if(data.type==='record') {
         if(data.value){this.capture=true;this.captureFrames=0;this.captureIndex=0;this.port.postMessage({type:'record-start',frame:this.mixer.frame,rate:sampleRate});}
         else this.finishCapture();
@@ -29,7 +30,7 @@ class LoopProcessor extends AudioWorkletProcessor {
       if(this.capture){this.captureBuffer[this.captureIndex++]=Math.round(Math.max(-1,Math.min(1,left[i]))*32767);this.captureBuffer[this.captureIndex++]=Math.round(Math.max(-1,Math.min(1,right[i]))*32767);this.captureFrames++;if(this.captureIndex===this.captureBuffer.length)this.flush();if(this.captureFrames>=sampleRate*300)this.finishCapture();}
     }
     this.report+=left.length;
-    if(this.report>=sampleRate/10){this.report=0;this.port.postMessage({type:'position',frame:this.mixer.frame,phrase:this.mixer.phrase,beat:this.mixer.bank?this.mixer.frame/this.mixer.beatLength:0,peak,active:this.mixer.running,voices:this.mixer.voices.length});}
+    if(this.report>=sampleRate/10){this.report=0;this.port.postMessage({type:'position',frame:this.mixer.frame,phrase:this.mixer.phrase,beat:this.mixer.bank?this.mixer.frame/this.mixer.beatLength:0,peak,active:this.mixer.running,voices:this.mixer.voices.length,choir:this.mixer.bank?this.mixer.vocalState():null});}
     return true;
   }
 }
